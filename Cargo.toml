@@ -1,0 +1,15 @@
+[package]
+name = "mongo-task-gen"
+version = "0.1.0"
+authors = ["David Bradford <david.bradford@mongodb.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+evg-api-rs = { git = "https://github.com/dbradf/evg-api-rs.git" }
+maplit = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.8"
+shrub-rs = { git = "https://github.com/dbradf/shrub-rs.git" }
+tokio = { version = "1", features = ["full"] }
