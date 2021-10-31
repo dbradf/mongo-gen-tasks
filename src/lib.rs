@@ -1,3 +1,6 @@
+pub mod resmoke;
+pub mod split_tasks;
+pub mod task_history;
 pub mod taskname;
 
 pub struct SubSuite {
