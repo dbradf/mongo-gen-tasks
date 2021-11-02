@@ -1,17 +1,44 @@
 use crate::resmoke::TestDiscovery;
 use crate::task_history::{get_test_name, TaskRuntimeHistory, TestRuntimeHistory};
 use std::cmp::min;
+use shrub_rs::models::builtin::HostScope::Task;
+use shrub_rs::models::task::TaskRef;
+use shrub_rs::models::variant::DisplayTask;
 
 #[derive(Debug, Clone)]
 pub struct SubSuite {
-    test_list: Vec<String>,
+    pub name: String,
+    pub test_list: Vec<String>,
+}
+
+impl SubSuite {
+    pub fn task_ref(&self) -> TaskRef {
+        TaskRef {
+            name: self.name.to_string(),
+            distros: None
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct GeneratedSuite {
-    task_name: String,
-    sub_suites: Vec<SubSuite>,
+    pub task_name: String,
+    pub sub_suites: Vec<SubSuite>,
 }
+
+impl GeneratedSuite {
+    pub fn task_refs(&self) -> Vec<TaskRef> {
+        self.sub_suites.iter().map(|s| s.task_ref()).collect()
+    }
+
+    pub fn display_task(&self) -> DisplayTask {
+        DisplayTask {
+            name: self.task_name.clone(),
+            execution_tasks: self.sub_suites.iter().map(|s| s.name.clone()).collect(),
+        }
+    }
+}
+
 
 pub struct SplitConfig {
     pub n_suites: usize,
@@ -36,6 +63,7 @@ impl TaskSplitter {
         let mut sub_suites = vec![];
         let mut running_tests = vec![];
         let mut running_runtime = 0.0;
+        let mut i = 0;
         for test in test_list {
             let test_name = get_test_name(&test);
             if let Some(test_stats) = task_stats.test_map.get(&test_name) {
@@ -44,10 +72,12 @@ impl TaskSplitter {
                     && sub_suites.len() < max_tasks
                 {
                     sub_suites.push(SubSuite {
+                        name: format!("{}_{}", &task_stats.task_name, i),
                         test_list: running_tests.clone(),
                     });
                     running_tests = vec![];
                     running_runtime = 0.0;
+                    i += 1;
                 }
                 running_runtime += test_stats.average_runtime;
             }
@@ -55,6 +85,7 @@ impl TaskSplitter {
         }
         if !running_tests.is_empty() {
             sub_suites.push(SubSuite {
+                name: format!("{}_{}", &task_stats.task_name, i),
                 test_list: running_tests.clone(),
             });
         }

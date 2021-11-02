@@ -21,6 +21,8 @@ use shrub_rs::models::{
 };
 use std::{collections::HashMap, error::Error, process::Command};
 use shrub_rs::models::commands::FunctionCall;
+use shrub_rs::models::task::TaskRef;
+use shrub_rs::models::variant::{BuildVariant, DisplayTask};
 
 fn get_project_config(location: &str) -> Result<EvgProject, Box<dyn Error>> {
     let evg_config_yaml = Command::new("evergreen")
@@ -118,34 +120,22 @@ async fn main() {
             ))
         }
     }
-
-    let task_histories = join_all(history_futures).await;
-
-    let test_discovery = ResmokeProxy {};
-    let task_splitter = TaskSplitter {
-        test_discovery: Box::new(test_discovery),
-        split_config: SplitConfig { n_suites: 5 },
+    let mut shrub_project = EvgProject {
+        ..Default::default()
     };
 
-    task_histories.par_iter().for_each(|task_history| {
+    let mut task_map = HashMap::with_capacity(evg_project.tasks.len());
+    let task_histories = join_all(history_futures).await;
+    for task_history in task_histories {
         let test_discovery = ResmokeProxy {};
         let task_splitter = TaskSplitter {
             test_discovery: Box::new(test_discovery),
             split_config: SplitConfig { n_suites: 5 },
         };
-        let gen_suite = task_splitter.split_task(task_history);
-        println!("{:?}", gen_suite);
-
-    });
-    // for task_history in task_histories {
-    //     let gen_suite = task_splitter.split_task(task_history);
-    //     println!("{:?}", gen_suite);
-    // }
-
-    // let test_list = test_discovery.discover_tests("core");
-    // for test in test_list {
-    //     println!("- {}", test);
-    // }
+        let gen_suite = task_splitter.split_task(&task_history);
+        println!("{:?}", &gen_suite);
+        task_map.insert(gen_suite.task_name.clone(), gen_suite);
+    }
 
     // let mut task_map = HashMap::with_capacity(evg_project.tasks.len());
     // for task in &evg_project.tasks {
@@ -157,8 +147,34 @@ async fn main() {
     // let mut gen_fuzzer = 0;
     // let mut other_gen = vec![];
     // let mut gen_task_list = vec![];
-    // for build_variant in &evg_project.buildvariants {
-    //     println!("{}", build_variant.name);
+
+    for build_variant in &evg_project.buildvariants {
+        let mut bv = BuildVariant {
+            name: build_variant.name.clone(),
+            display_tasks: Some(vec![]),
+            ..Default::default()
+        };
+        let generated_tasks: Vec<&String> = build_variant.tasks.iter().filter(|t| {
+            let search_name = remove_gen_suffix_ref(&t.name);
+            task_map.contains_key(search_name)
+        }).map(|t| &t.name).collect();
+
+        generated_tasks.iter().for_each(|t| {
+            let search_name = remove_gen_suffix_ref(t);
+            let gen_suite = task_map.get(remove_gen_suffix_ref(&t.to_string())).unwrap();
+            let mut execution_tasks = vec![];
+            for sub_suite in &gen_suite.task_refs() {
+                execution_tasks.push(sub_suite.name.clone());
+                bv.tasks.push(sub_suite.clone());
+            }
+
+            bv.display_tasks.as_mut().unwrap().push(gen_suite.display_task());
+        });
+        shrub_project.buildvariants.push(bv);
+    }
+
+    let config = serde_yaml::to_string(&shrub_project).unwrap();
+    println!("{}", config);
     //     for task in &build_variant.tasks {
     //         if task.name.ends_with("_gen") {
     //             if let Some(task_def) = task_map.get(&task.name) {
