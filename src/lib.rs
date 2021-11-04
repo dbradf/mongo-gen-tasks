@@ -1,4 +1,5 @@
 pub mod resmoke;
+pub mod resmoke_task_gen;
 pub mod split_tasks;
 pub mod task_history;
 pub mod taskname;

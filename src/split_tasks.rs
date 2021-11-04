@@ -1,9 +1,8 @@
 use crate::resmoke::TestDiscovery;
-use crate::task_history::{get_test_name, TaskRuntimeHistory, TestRuntimeHistory};
-use std::cmp::min;
-use shrub_rs::models::builtin::HostScope::Task;
+use crate::task_history::{get_test_name, TaskRuntimeHistory};
 use shrub_rs::models::task::TaskRef;
 use shrub_rs::models::variant::DisplayTask;
+use std::cmp::min;
 
 #[derive(Debug, Clone)]
 pub struct SubSuite {
@@ -15,7 +14,7 @@ impl SubSuite {
     pub fn task_ref(&self) -> TaskRef {
         TaskRef {
             name: self.name.to_string(),
-            distros: None
+            distros: None,
         }
     }
 }
@@ -38,7 +37,6 @@ impl GeneratedSuite {
         }
     }
 }
-
 
 pub struct SplitConfig {
     pub n_suites: usize,

@@ -1,9 +1,8 @@
 use chrono::{Duration, Utc};
 use evg_api_rs::models::stats::EvgTestStatsRequest;
 use evg_api_rs::EvgClient;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::path::PathBuf;
 
 // const TASK_LEVEL_HOOKS: HashSet<&str> = vec!["CleanEveryN"].iter().collect();
 
