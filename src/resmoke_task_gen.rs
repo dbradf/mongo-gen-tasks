@@ -2,6 +2,7 @@ use shrub_rs::models::commands::{fn_call, fn_call_with_params, EvgCommand};
 use shrub_rs::models::params::ParamValue;
 use shrub_rs::models::task::{EvgTask, TaskDependency};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::split_tasks::GeneratedSuite;
 
@@ -13,15 +14,23 @@ pub struct GenerateOptions {
 }
 
 impl GenerateOptions {
-    pub fn suite_location<'a>(&self, f: &'a str) -> &'a str {
-        f
+    pub fn suite_location(&self, suite_name: &str) -> String {
+        let suite = PathBuf::from(suite_name);
+        self.generated_file_location(suite.as_path().file_name().unwrap().to_str().unwrap())
+    }
+
+    fn generated_file_location(&self, base_file: &str) -> String {
+        let path: PathBuf = [&self.generated_config_dir, base_file].iter().collect();
+        path.to_str().unwrap().to_string()
     }
 }
 
+/// Parameters describing how a specific resmoke suite should be generated.
 pub struct ResmokeGenParams {
     pub use_large_distro: bool,
     pub large_distro_name: Option<String>,
     pub require_multiversion_setup: bool,
+    // pub require_multiversion_setup_combo: bool,
     pub repeat_suites: usize,
     pub resmoke_args: String,
     pub resmoke_jobs_max: Option<u64>,

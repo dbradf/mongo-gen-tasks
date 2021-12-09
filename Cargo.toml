@@ -11,9 +11,16 @@ chrono = "0.4"
 cmd_lib = "1.3"
 evg-api-rs = { git = "https://github.com/dbradf/evg-api-rs.git" }
 futures = "0.3"
+lazy_static = "1.4"
 maplit = "1"
 rayon = "1.5"
+regex = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
-shrub-rs = { git = "https://github.com/dbradf/shrub-rs.git" }
+serde_json = "1.0"
+# shrub-rs = { git = "https://github.com/dbradf/shrub-rs.git" }
+shrub-rs = {path = "../shrub-rs"}
 tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+rstest = "0.11.0"

@@ -1,92 +1,16 @@
+use std::collections::HashMap;
+
 use evg_api_rs::EvgClient;
 use futures::future::join_all;
+use mongo_task_gen::{get_project_config, is_task_generated, is_fuzzer_task, find_suite_name, get_gen_task_var};
 use mongo_task_gen::resmoke::ResmokeProxy;
 use mongo_task_gen::resmoke_task_gen::{ResmokeGenParams, ResmokeGenService};
 use mongo_task_gen::split_tasks::{SplitConfig, TaskSplitter};
 use mongo_task_gen::task_history::get_task_history;
 use mongo_task_gen::taskname::remove_gen_suffix_ref;
-use shrub_rs::models::commands::EvgCommand::Function;
-use shrub_rs::models::commands::FunctionCall;
+use shrub_rs::models::project::EvgProject;
 use shrub_rs::models::variant::BuildVariant;
-use shrub_rs::models::{params::ParamValue, project::EvgProject, task::EvgTask};
-use std::{collections::HashMap, error::Error, process::Command};
 
-fn get_project_config(location: &str) -> Result<EvgProject, Box<dyn Error>> {
-    let evg_config_yaml = Command::new("evergreen")
-        .args(&["evaluate", location])
-        .output()?;
-    EvgProject::from_yaml_str(std::str::from_utf8(&evg_config_yaml.stdout)?)
-}
-
-#[derive(Debug)]
-struct EvgExpansions {
-    build_variant: String,
-    task_name: String,
-}
-
-fn is_task_generated(task: &EvgTask) -> bool {
-    task.commands.iter().any(|c| {
-        if let Function(func) = c {
-            if func.func == "generate resmoke tasks" {
-                return true;
-            }
-        }
-        false
-    })
-}
-
-fn get_generate_resmoke_func(task: &EvgTask) -> Option<&FunctionCall> {
-    let command = task
-        .commands
-        .iter()
-        .filter(|c| {
-            if let Function(func) = c {
-                if func.func == "generate resmoke tasks" {
-                    return true;
-                }
-            }
-            false
-        })
-        .nth(0)
-        .unwrap();
-    if let Function(func) = command {
-        return Some(func);
-    }
-    None
-}
-
-fn get_gen_task_var<'a>(task: &'a EvgTask, var: &str) -> Option<&'a str> {
-    let generate_func = get_generate_resmoke_func(task);
-    if let Some(func) = generate_func {
-        if let Some(vars) = &func.vars {
-            if let Some(value) = vars.get(var) {
-                match value {
-                    ParamValue::String(value) => return Some(value),
-                    _ => (),
-                }
-            }
-        }
-    }
-    None
-}
-
-fn find_suite_name(task: &EvgTask) -> &str {
-    let suite = get_gen_task_var(task, "suite");
-    if let Some(suite) = suite {
-        suite
-    } else {
-        remove_gen_suffix_ref(&task.name)
-    }
-}
-
-fn is_fuzzer_task(task: &EvgTask) -> bool {
-    let is_jstestfuzz = get_gen_task_var(task, "is_jstestfuzz");
-    if let Some(is_jstestfuzz) = is_jstestfuzz {
-        is_jstestfuzz == "true"
-    } else {
-        false
-    }
-}
 
 #[tokio::main]
 async fn main() {
