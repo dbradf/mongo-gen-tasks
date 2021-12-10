@@ -15,6 +15,7 @@ impl SubSuite {
         TaskRef {
             name: self.name.to_string(),
             distros: None,
+            activate: Some(false),
         }
     }
 }

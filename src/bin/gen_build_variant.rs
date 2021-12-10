@@ -20,7 +20,7 @@ struct EvgExpansions {
     /// Build variant be generated.
     pub build_variant: String,
     /// Whether a patch build is being generated.
-    pub is_patch: Option<bool>,
+    pub is_patch: Option<String>,
     /// Evergreen project being generated on.
     pub project: String,
     /// Max number of tests to add to each suite.
@@ -36,7 +36,7 @@ struct EvgExpansions {
     /// Name of task doing the generation.
     pub task_name: String,
     /// Target runtime for generated tasks.
-    pub target_resmoke_time: Option<usize>,
+    pub target_resmoke_time: Option<String>,
     /// ID of task doing the generation.
     pub task_id: String,
 }
@@ -49,8 +49,8 @@ impl EvgExpansions {
 
     /// Determine the max sub suites to split into.
     pub fn get_max_sub_suites(&self) -> usize {
-        if let Some(is_patch) = self.is_patch {
-            if is_patch {
+        if let Some(is_patch) = &self.is_patch {
+            if is_patch == "true" {
                 return self.max_sub_suite.unwrap_or(5);
             }
         }

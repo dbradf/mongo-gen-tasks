@@ -24,10 +24,7 @@ impl FuzzerTask {
 
     pub fn build_task_ref(&self) -> Vec<TaskRef> {
         self.sub_tasks.iter().map(|s| {
-            TaskRef { 
-                name: s.name.to_string(),
-                distros: None,
-            }
+            s.get_reference(None, Some(false))
         }).collect()
     }
 }
