@@ -1,7 +1,9 @@
 use std::{error::Error, process::Command};
 
 use shrub_rs::models::commands::EvgCommand::Function;
-use shrub_rs::models::{project::EvgProject, task::EvgTask, commands::FunctionCall, params::ParamValue};
+use shrub_rs::models::{
+    commands::FunctionCall, params::ParamValue, project::EvgProject, task::EvgTask,
+};
 use taskname::remove_gen_suffix_ref;
 
 pub mod resmoke;

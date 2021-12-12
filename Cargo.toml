@@ -21,6 +21,7 @@ serde_json = "1.0"
 # shrub-rs = { git = "https://github.com/dbradf/shrub-rs.git" }
 shrub-rs = {path = "../shrub-rs"}
 tokio = { version = "1", features = ["full"] }
+yaml-rust = "0.4"
 
 [dev-dependencies]
 rstest = "0.11.0"

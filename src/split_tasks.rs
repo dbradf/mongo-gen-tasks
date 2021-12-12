@@ -23,6 +23,7 @@ impl SubSuite {
 #[derive(Debug, Clone)]
 pub struct GeneratedSuite {
     pub task_name: String,
+    pub suite_name: String,
     pub sub_suites: Vec<SubSuite>,
 }
 
@@ -50,7 +51,8 @@ pub struct TaskSplitter {
 
 impl TaskSplitter {
     pub fn split_task(&self, task_stats: &TaskRuntimeHistory) -> GeneratedSuite {
-        let test_list = self.test_discovery.discover_tests(&task_stats.suite_name);
+        let suite_name = &task_stats.suite_name;
+        let test_list = self.test_discovery.discover_tests(suite_name);
         let total_runtime = task_stats
             .test_map
             .iter()
@@ -92,6 +94,7 @@ impl TaskSplitter {
         GeneratedSuite {
             task_name: task_stats.task_name.clone(),
             sub_suites,
+            suite_name: suite_name.to_string(),
         }
     }
 }

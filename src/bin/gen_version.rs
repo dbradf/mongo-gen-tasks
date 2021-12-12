@@ -2,15 +2,16 @@ use std::collections::HashMap;
 
 use evg_api_rs::EvgClient;
 use futures::future::join_all;
-use mongo_task_gen::{get_project_config, is_task_generated, is_fuzzer_task, find_suite_name, get_gen_task_var};
 use mongo_task_gen::resmoke::ResmokeProxy;
 use mongo_task_gen::resmoke_task_gen::{ResmokeGenParams, ResmokeGenService};
 use mongo_task_gen::split_tasks::{SplitConfig, TaskSplitter};
 use mongo_task_gen::task_history::get_task_history;
 use mongo_task_gen::taskname::remove_gen_suffix_ref;
+use mongo_task_gen::{
+    find_suite_name, get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
+};
 use shrub_rs::models::project::EvgProject;
 use shrub_rs::models::variant::BuildVariant;
-
 
 #[tokio::main]
 async fn main() {

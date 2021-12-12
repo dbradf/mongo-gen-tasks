@@ -1,15 +1,32 @@
-use std::{path::Path, error::Error, collections::HashSet};
+use rayon::prelude::*;
+use std::{
+    collections::HashSet,
+    error::Error,
+    path::{Path, PathBuf},
+};
 
-use lazy_static::lazy_static;
 use evg_api_rs::EvgClient;
-use mongo_task_gen::{get_project_config, taskname::remove_gen_suffix_ref, is_task_generated, is_fuzzer_task, task_types::fuzzer_tasks::{FuzzerGenTaskParams, generate_fuzzer_task}, get_gen_task_var, find_suite_name};
+use lazy_static::lazy_static;
+use mongo_task_gen::{
+    find_suite_name, get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
+    resmoke::{generate_test_config, ResmokeProxy},
+    resmoke_task_gen::{ResmokeGenParams, ResmokeGenService},
+    split_tasks::{SplitConfig, TaskSplitter},
+    task_history::{get_task_history, TaskRuntimeHistory},
+    task_types::fuzzer_tasks::{generate_fuzzer_task, FuzzerGenTaskParams},
+    taskname::remove_gen_suffix_ref,
+};
 use regex::Regex;
 use serde::Deserialize;
-use shrub_rs::models::{task::EvgTask, variant::{BuildVariant, DisplayTask}, project::EvgProject};
-
+use shrub_rs::models::{
+    project::EvgProject,
+    task::EvgTask,
+    variant::{BuildVariant, DisplayTask},
+};
 
 lazy_static! {
-    static ref EXPANSION_RE: Regex = Regex::new(r"\$\{(?P<id>[a-zA-Z0-9_]+)(\|(?P<default>.*))?}").unwrap();
+    static ref EXPANSION_RE: Regex =
+        Regex::new(r"\$\{(?P<id>[a-zA-Z0-9_]+)(\|(?P<default>.*))?}").unwrap();
 }
 
 /// Data extracted from Evergreen expansions.
@@ -59,10 +76,12 @@ impl EvgExpansions {
 
     pub fn config_location(&self) -> String {
         let generated_task_name = remove_gen_suffix_ref(&self.task_name);
-        format!("{}/{}/generate_tasks/{}_gen-{}.tgz", self.build_variant, self.revision, generated_task_name, self.build_id)
+        format!(
+            "{}/{}/generate_tasks/{}_gen-{}.tgz",
+            self.build_variant, self.revision, generated_task_name, self.build_id
+        )
     }
 }
-
 
 fn translate_run_var(run_var: &str, build_variant: &BuildVariant) -> Option<String> {
     let expansion = EXPANSION_RE.captures(run_var);
@@ -78,27 +97,103 @@ fn translate_run_var(run_var: &str, build_variant: &BuildVariant) -> Option<Stri
     }
 }
 
-fn task_def_to_fuzzer_params(task_def: &EvgTask, build_variant: &BuildVariant, config_location: &str) -> FuzzerGenTaskParams {
-    let large_distro_name = build_variant.expansions.clone().map(|e| e.get("large_distro_name").map(|d| d.to_string())).flatten();
-    let num_files = translate_run_var(get_gen_task_var(task_def, "num_files").unwrap(), build_variant).unwrap();
+fn task_def_to_fuzzer_params(
+    task_def: &EvgTask,
+    build_variant: &BuildVariant,
+    config_location: &str,
+) -> FuzzerGenTaskParams {
+    let large_distro_name = build_variant
+        .expansions
+        .clone()
+        .map(|e| e.get("large_distro_name").map(|d| d.to_string()))
+        .flatten();
+    let num_files = translate_run_var(
+        get_gen_task_var(task_def, "num_files").unwrap(),
+        build_variant,
+    )
+    .unwrap();
 
     FuzzerGenTaskParams {
         task_name: remove_gen_suffix_ref(&task_def.name).to_string(),
         variant: build_variant.name.to_string(),
         suite: find_suite_name(task_def).to_string(),
         num_files: num_files.parse().unwrap(),
-        num_tasks: get_gen_task_var(task_def, "num_tasks").unwrap().parse().unwrap(),
-        resmoke_args: get_gen_task_var(task_def, "resmoke_args").unwrap().to_string(),
-        npm_command: get_gen_task_var(task_def, "npm_command").unwrap_or("jstestfuzz").to_string(),
+        num_tasks: get_gen_task_var(task_def, "num_tasks")
+            .unwrap()
+            .parse()
+            .unwrap(),
+        resmoke_args: get_gen_task_var(task_def, "resmoke_args")
+            .unwrap()
+            .to_string(),
+        npm_command: get_gen_task_var(task_def, "npm_command")
+            .unwrap_or("jstestfuzz")
+            .to_string(),
         jstestfuzz_vars: get_gen_task_var(task_def, "jstestfuzz_vars").map(|j| j.to_string()),
-        continue_on_failure: get_gen_task_var(task_def, "continue_on_failure").unwrap().parse().unwrap(),
-        resmoke_jobs_max: get_gen_task_var(task_def, "resmoke_jobs_max").unwrap().parse().unwrap(),
-        should_shuffle: get_gen_task_var(task_def, "should_shuffle").unwrap().parse().unwrap(),
-        timeout_secs: get_gen_task_var(task_def, "timeout_secs").unwrap().parse().unwrap(),
-        require_multiversion_setup: Some(task_def.tags.clone().unwrap_or(vec![]).contains(&"multiversion".to_string())),
-        use_large_distro: get_gen_task_var(task_def, "use_large_distro").map(|d| d.parse().unwrap()),
+        continue_on_failure: get_gen_task_var(task_def, "continue_on_failure")
+            .unwrap()
+            .parse()
+            .unwrap(),
+        resmoke_jobs_max: get_gen_task_var(task_def, "resmoke_jobs_max")
+            .unwrap()
+            .parse()
+            .unwrap(),
+        should_shuffle: get_gen_task_var(task_def, "should_shuffle")
+            .unwrap()
+            .parse()
+            .unwrap(),
+        timeout_secs: get_gen_task_var(task_def, "timeout_secs")
+            .unwrap()
+            .parse()
+            .unwrap(),
+        require_multiversion_setup: Some(
+            task_def
+                .tags
+                .clone()
+                .unwrap_or(vec![])
+                .contains(&"multiversion".to_string()),
+        ),
+        use_large_distro: get_gen_task_var(task_def, "use_large_distro")
+            .map(|d| d.parse().unwrap()),
         large_distro_name: large_distro_name.clone(),
         config_location: config_location.to_string(),
+    }
+}
+
+async fn task_def_to_split_params(
+    evg_client: &EvgClient,
+    task_def: &EvgTask,
+    build_variant: &str,
+) -> TaskRuntimeHistory {
+    let task_name = remove_gen_suffix_ref(&task_def.name);
+    get_task_history(
+        evg_client,
+        task_name,
+        build_variant,
+        find_suite_name(task_def),
+    )
+    .await
+}
+
+async fn task_def_to_gen_params(
+    task_def: &EvgTask,
+    build_variant: &BuildVariant,
+    config_location: &str,
+) -> ResmokeGenParams {
+    let resmoke_args = get_gen_task_var(&task_def, "resmoke_args").unwrap();
+    ResmokeGenParams {
+        use_large_distro: get_gen_task_var(task_def, "use_large_distro")
+            .map(|d| d == "true")
+            .unwrap_or(false),
+        large_distro_name: build_variant
+            .expansions
+            .as_ref()
+            .map(|e| e.get("large_distro_name").map(|d| d.to_string()))
+            .flatten(),
+        require_multiversion_setup: false,
+        repeat_suites: 1,
+        resmoke_args: resmoke_args.to_string(),
+        config_location: Some(config_location.to_string()),
+        resmoke_jobs_max: None,
     }
 }
 
@@ -109,36 +204,85 @@ async fn main() {
     let expansion_file = std::env::args().nth(2).expect("Expected expansions file");
     let evg_expansions = EvgExpansions::from_yaml_file(Path::new(&expansion_file)).unwrap();
 
-    // let evg_client = EvgClient::new().unwrap();
+    let evg_client = EvgClient::new().unwrap();
 
     let task_map = evg_project.task_def_map();
     let bv_map = evg_project.build_variant_map();
     let build_variant = bv_map.get(&evg_expansions.build_variant).unwrap();
+    let config_location = &evg_expansions.config_location();
+    let resmoke_gen_service = ResmokeGenService {};
 
     let mut found_tasks = HashSet::new();
     let mut gen_task_def = vec![];
     let mut gen_task_specs = vec![];
     let mut display_tasks = vec![];
 
+    let config_dir = "generated_resmoke_config";
+    std::fs::create_dir_all(config_dir).unwrap();
+
     for task in &build_variant.tasks {
         if let Some(task_def) = task_map.get(&task.name) {
             if is_task_generated(task_def) {
                 found_tasks.insert(task_def.name.clone());
                 if is_fuzzer_task(task_def) {
-                    let params = task_def_to_fuzzer_params(task_def, build_variant, &evg_expansions.config_location());
+                    let params =
+                        task_def_to_fuzzer_params(task_def, build_variant, &config_location);
                     let generated_task = generate_fuzzer_task(&params);
                     gen_task_def.extend(generated_task.sub_tasks.clone());
                     gen_task_specs.extend(generated_task.build_task_ref());
                     display_tasks.push(generated_task.build_display_task());
+                } else {
+                    let test_discovery = ResmokeProxy {};
+                    let task_history = task_def_to_split_params(
+                        &evg_client,
+                        task_def,
+                        &evg_expansions.build_variant,
+                    )
+                    .await;
+                    let task_splitter = TaskSplitter {
+                        test_discovery: Box::new(test_discovery),
+                        split_config: SplitConfig {
+                            n_suites: evg_expansions.get_max_sub_suites(),
+                        },
+                    };
+                    let gen_suite = task_splitter.split_task(&task_history);
+                    let gen_params =
+                        task_def_to_gen_params(task_def, &build_variant, &config_location).await;
+                    let all_tests: Vec<String> = gen_suite
+                        .sub_suites
+                        .iter()
+                        .map(|s| s.test_list.clone())
+                        .flatten()
+                        .collect();
 
-                    // println!("{:?}", params);
+                    gen_suite.sub_suites.par_iter().for_each(|s| {
+                        let config =
+                            generate_test_config(&gen_suite.suite_name, &s.test_list, None);
+                        let mut path = PathBuf::from(config_dir);
+                        path.push(format!("{}.yml", s.name));
+
+                        std::fs::write(path, config).unwrap();
+                    });
+                    let misc_config =
+                        generate_test_config(&gen_suite.suite_name, &vec![], Some(&all_tests));
+                    let mut path = PathBuf::from(config_dir);
+                    path.push(format!("{}_misc.yml", gen_suite.task_name));
+                    std::fs::write(path, misc_config).unwrap();
+
+                    resmoke_gen_service
+                        .generate_tasks(&gen_suite, &gen_params)
+                        .into_iter()
+                        .for_each(|t| {
+                            gen_task_def.push(t.clone());
+                            gen_task_specs.push(t.get_reference(None, Some(false)));
+                        });
                 }
             }
         }
     }
 
-    display_tasks.push(DisplayTask { 
-        name: "generator_tasks".to_string(), 
+    display_tasks.push(DisplayTask {
+        name: "generator_tasks".to_string(),
         execution_tasks: found_tasks.into_iter().collect(),
     });
 
@@ -155,5 +299,6 @@ async fn main() {
         ..Default::default()
     };
 
-    println!("{}", serde_json::to_string(&gen_evg_project).unwrap());
+    // println!("{}", serde_json::to_string(&gen_evg_project).unwrap());
+    println!("{}", serde_yaml::to_string(&gen_evg_project).unwrap());
 }

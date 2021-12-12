@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use shrub_rs::models::{
     commands::{fn_call, fn_call_with_params},
     params::ParamValue,
-    task::{EvgTask, TaskDependency, TaskRef}, variant::DisplayTask,
+    task::{EvgTask, TaskDependency, TaskRef},
+    variant::DisplayTask,
 };
 
 use crate::util::name_generated_task;
@@ -16,16 +17,17 @@ pub struct FuzzerTask {
 
 impl FuzzerTask {
     pub fn build_display_task(&self) -> DisplayTask {
-        DisplayTask { 
-            name: self.task_name.clone(), 
+        DisplayTask {
+            name: self.task_name.clone(),
             execution_tasks: self.sub_tasks.iter().map(|s| s.name.to_string()).collect(),
         }
     }
 
     pub fn build_task_ref(&self) -> Vec<TaskRef> {
-        self.sub_tasks.iter().map(|s| {
-            s.get_reference(None, Some(false))
-        }).collect()
+        self.sub_tasks
+            .iter()
+            .map(|s| s.get_reference(None, Some(false)))
+            .collect()
     }
 }
 
@@ -68,9 +70,18 @@ pub struct FuzzerGenTaskParams {
 impl FuzzerGenTaskParams {
     fn build_jstestfuzz_vars(&self) -> HashMap<String, ParamValue> {
         let mut vars = HashMap::new();
-        if let Some(jstestfuzz_vars) = &self.jstestfuzz_vars {
-            vars.insert("jstestfuzz_vars".to_string(), ParamValue::from(jstestfuzz_vars.as_str()));
-        }
+        vars.insert(
+            "npm_command".to_string(),
+            ParamValue::from(self.npm_command.as_str()),
+        );
+        vars.insert(
+            "jstestfuzz_vars".to_string(),
+            ParamValue::String(format!(
+                "--numGeneratedFiles {} {}",
+                self.num_files,
+                self.jstestfuzz_vars.clone().unwrap_or("".to_string())
+            )),
+        );
         vars
     }
 
