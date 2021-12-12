@@ -82,7 +82,7 @@ fn run_test_vars(suite_file: &str, params: &ResmokeGenParams) -> HashMap<String,
         String::from("resmoke_args"),
         ParamValue::from(resmoke_args.as_str()),
     );
-    run_test_vars.insert(String::from("suite"), ParamValue::from(suite_file));
+    run_test_vars.insert(String::from("suite"), ParamValue::from(format!("generated_resmoke_config/{}.yml", suite_file).as_str()));
 
     if let Some(config_location) = &params.config_location {
         run_test_vars.insert(
@@ -130,7 +130,7 @@ fn resmoke_commands(
 
 fn dependencies() -> Vec<TaskDependency> {
     vec![TaskDependency {
-        name: String::from("activate_archive_dist_test_debug"),
+        name: String::from("archive_dist_test"),
         variant: None,
     }]
 }

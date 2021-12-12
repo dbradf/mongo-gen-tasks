@@ -231,8 +231,8 @@ dependencies = [
 
 [[package]]
 name = "evg-api-rs"
-version = "0.1.2"
-source = "git+https://github.com/dbradf/evg-api-rs.git#f60157b2b39436ea00c7a97ac6a02257653ec14b"
+version = "0.1.3"
+source = "git+https://github.com/dbradf/evg-api-rs.git#ac669f0675d297db014f16ca9c76c390e34b2d7f"
 dependencies = [
  "async-stream",
  "chrono",
@@ -1208,6 +1208,7 @@ dependencies = [
 [[package]]
 name = "shrub-rs"
 version = "0.4.0"
+source = "git+https://github.com/dbradf/shrub-rs.git#345969c7143a8c93565b794dbec862ce4ca0ac2f"
 dependencies = [
  "serde",
  "serde_yaml",

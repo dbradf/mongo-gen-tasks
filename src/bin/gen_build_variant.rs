@@ -290,6 +290,7 @@ async fn main() {
                             gen_task_def.push(t.clone());
                             gen_task_specs.push(t.get_reference(None, Some(false)));
                         });
+                    display_tasks.push(gen_suite.display_task());
                 }
             }
         }
@@ -313,6 +314,6 @@ async fn main() {
         ..Default::default()
     };
 
-    // println!("{}", serde_json::to_string(&gen_evg_project).unwrap());
-    println!("{}", serde_yaml::to_string(&gen_evg_project).unwrap());
+    println!("{}", serde_json::to_string(&gen_evg_project).unwrap());
+    // println!("{}", serde_yaml::to_string(&gen_evg_project).unwrap());
 }
