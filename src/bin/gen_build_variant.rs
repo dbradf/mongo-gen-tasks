@@ -1,4 +1,5 @@
 use rayon::prelude::*;
+use structopt::StructOpt;
 use std::{
     collections::HashSet,
     error::Error,
@@ -197,14 +198,27 @@ async fn task_def_to_gen_params(
     }
 }
 
+#[derive(Debug, StructOpt)]
+struct Opt {
+    #[structopt(long, parse(from_os_str))]
+    evg_project_location: PathBuf,
+
+    #[structopt(long, parse(from_os_str))]
+    expansion_file: PathBuf,
+
+    #[structopt(long, parse(from_os_str))]
+    evg_auth_file: PathBuf,
+}
+
 #[tokio::main]
 async fn main() {
-    let evg_project_location = std::env::args().nth(1).expect("Expected project config");
+    let opt = Opt::from_args();
+    let evg_project_location = opt.evg_project_location;
     let evg_project = get_project_config(&evg_project_location).unwrap();
-    let expansion_file = std::env::args().nth(2).expect("Expected expansions file");
+    let expansion_file = opt.expansion_file;
     let evg_expansions = EvgExpansions::from_yaml_file(Path::new(&expansion_file)).unwrap();
 
-    let evg_client = EvgClient::new().unwrap();
+    let evg_client = EvgClient::from_file(&opt.evg_auth_file).unwrap();
 
     let task_map = evg_project.task_def_map();
     let bv_map = evg_project.build_variant_map();

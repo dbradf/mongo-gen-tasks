@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::{error::Error, process::Command};
 
 use shrub_rs::models::commands::EvgCommand::Function;
@@ -29,9 +30,9 @@ pub struct GeneratedSuite {
     pub include_build_variant_in_name: bool,
 }
 
-pub fn get_project_config(location: &str) -> Result<EvgProject, Box<dyn Error>> {
+pub fn get_project_config(location: &Path) -> Result<EvgProject, Box<dyn Error>> {
     let evg_config_yaml = Command::new("evergreen")
-        .args(&["evaluate", location])
+        .args(&["evaluate", location.to_str().unwrap()])
         .output()?;
     EvgProject::from_yaml_str(std::str::from_utf8(&evg_config_yaml.stdout)?)
 }

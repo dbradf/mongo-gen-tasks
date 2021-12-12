@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use evg_api_rs::EvgClient;
 use futures::future::join_all;
@@ -16,7 +17,7 @@ use shrub_rs::models::variant::BuildVariant;
 #[tokio::main]
 async fn main() {
     let evg_project_location = std::env::args().nth(1).expect("Expected project config");
-    let evg_project = get_project_config(&evg_project_location).unwrap();
+    let evg_project = get_project_config(&Path::new(&evg_project_location)).unwrap();
     let evg_client = EvgClient::new().unwrap();
     let build_variant = "enterprise-rhel-80-64-bit-dynamic-required";
 
