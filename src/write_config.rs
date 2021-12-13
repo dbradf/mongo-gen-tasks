@@ -1,9 +1,12 @@
-use std::{path::PathBuf, time::Instant};
+use std::path::PathBuf;
 
 use rayon::prelude::*;
 use tokio::sync::mpsc;
 
-use crate::{resmoke::generate_test_config, split_tasks::GeneratedSuite};
+use crate::{
+    resmoke::{read_suite_config, update_config},
+    split_tasks::GeneratedSuite,
+};
 
 #[derive(Debug, Clone)]
 enum WriteConfigMessage {
@@ -33,10 +36,10 @@ impl WriteConfigActor {
     fn handle_message(&mut self, msg: WriteConfigMessage) {
         match msg {
             WriteConfigMessage::SuiteFiles(gen_suite) => {
-                let now = Instant::now();
+                let base_config = read_suite_config(&gen_suite.suite_name);
 
                 gen_suite.sub_suites.par_iter().for_each(|s| {
-                    let config = generate_test_config(&gen_suite.suite_name, &s.test_list, None);
+                    let config = update_config(&base_config, &s.test_list, None);
                     let mut path = PathBuf::from(&self.config_dir);
                     path.push(format!("{}.yml", s.name));
 
@@ -48,17 +51,10 @@ impl WriteConfigActor {
                     .map(|s| s.test_list.clone())
                     .flatten()
                     .collect();
-                let misc_config =
-                    generate_test_config(&gen_suite.suite_name, &vec![], Some(&all_tests));
+                let misc_config = update_config(&base_config, &vec![], Some(&all_tests));
                 let mut path = PathBuf::from(&self.config_dir);
                 path.push(format!("{}_misc.yml", gen_suite.task_name));
                 std::fs::write(path, misc_config).unwrap();
-
-                println!(
-                    "Created Files: {}: {}ms",
-                    &gen_suite.suite_name,
-                    now.elapsed().as_millis()
-                );
             }
         }
     }
@@ -66,20 +62,37 @@ impl WriteConfigActor {
 
 #[derive(Clone, Debug)]
 pub struct WriteConfigActorHandle {
-    sender: mpsc::Sender<WriteConfigMessage>,
+    senders: Vec<mpsc::Sender<WriteConfigMessage>>,
+    index: usize,
 }
 
 impl WriteConfigActorHandle {
     pub fn new(config_dir: &str) -> Self {
-        let (sender, receiver) = mpsc::channel(32);
-        let mut actor = WriteConfigActor::new(receiver, config_dir.to_string());
-        tokio::spawn(async move { actor.run().await });
+        let count = 10;
+        let senders_and_revievers: Vec<(
+            mpsc::Sender<WriteConfigMessage>,
+            mpsc::Receiver<WriteConfigMessage>,
+        )> = (0..count).map(|_| mpsc::channel(32)).collect();
+        let mut senders = vec![];
+        senders_and_revievers
+            .into_iter()
+            .for_each(|(sender, receiver)| {
+                senders.push(sender);
+                let mut actor = WriteConfigActor::new(receiver, config_dir.to_string());
+                tokio::spawn(async move { actor.run().await });
+            });
 
-        Self { sender }
+        Self { senders, index: 0 }
     }
 
-    pub async fn write_sub_suite(&self, gen_suite: &GeneratedSuite) {
+    async fn round_robbin(&mut self, msg: WriteConfigMessage) {
+        let next = self.index;
+        self.index = (next + 1) % self.senders.len();
+        self.senders[next].send(msg).await.unwrap();
+    }
+
+    pub async fn write_sub_suite(&mut self, gen_suite: &GeneratedSuite) {
         let msg = WriteConfigMessage::SuiteFiles(gen_suite.clone());
-        self.sender.send(msg).await.unwrap();
+        self.round_robbin(msg).await;
     }
 }

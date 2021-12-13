@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf, time::Instant};
+use std::{collections::HashSet, path::PathBuf};
 
 use shrub_rs::models::{
     project::EvgProject,
@@ -48,8 +48,6 @@ impl GeneratorActor {
     fn handle_message(&mut self, msg: GeneratorMessage) {
         match msg {
             GeneratorMessage::ResmokeSuite(gen_suite, gen_params) => {
-                println!("Starting {}", &gen_suite.suite_name);
-                let now = Instant::now();
                 self.resmoke_gen_service
                     .generate_tasks(&gen_suite, &gen_params)
                     .into_iter()
@@ -58,11 +56,6 @@ impl GeneratorActor {
                         self.gen_task_specs.push(t.get_reference(None, Some(false)));
                     });
                 self.display_tasks.push(gen_suite.display_task());
-                println!(
-                    "Gen time: {}: {}ms",
-                    &gen_suite.suite_name,
-                    now.elapsed().as_millis()
-                );
             }
             GeneratorMessage::GeneratorTasks(found_tasks) => {
                 self.display_tasks.push(DisplayTask {

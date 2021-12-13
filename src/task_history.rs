@@ -4,8 +4,6 @@ use evg_api_rs::EvgClient;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
-// const TASK_LEVEL_HOOKS: HashSet<&str> = vec!["CleanEveryN"].iter().collect();
-
 #[derive(Debug, Clone)]
 pub struct HookRuntimeHistory {
     pub test_name: String,
@@ -116,12 +114,6 @@ pub async fn get_task_history(
             }
         }
     }
-
-    // println!("{}: ", task);
-    // for (task, test) in test_map {
-    //     println!("{}", task);
-    //     println!("{}", test);
-    // }
 
     TaskRuntimeHistory {
         suite_name: suite.to_string(),
