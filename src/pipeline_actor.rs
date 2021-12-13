@@ -1,7 +1,7 @@
 use std::{collections::HashSet, path::PathBuf};
 
 use shrub_rs::models::{task::EvgTask, variant::BuildVariant};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     gen_actor::GeneratorActorHandle,
@@ -36,13 +36,14 @@ async fn task_def_to_gen_params(
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 enum PipelineMessage {
     SplitTask(TaskRuntimeHistory, EvgTask),
     GenFuzzer(FuzzerGenTaskParams),
     GenResmokeSuite(GeneratedSuite, ResmokeGenParams),
     GeneratorTasks(HashSet<String>),
     Write(String, PathBuf),
+    Flush(oneshot::Sender<()>),
 }
 
 struct PipelineActor {
@@ -104,6 +105,9 @@ impl PipelineActor {
             PipelineMessage::Write(bv_name, path) => {
                 self.generator_actor.write(&bv_name, path).await;
             }
+            PipelineMessage::Flush(sender) => {
+                sender.send(()).unwrap();
+            }
         }
     }
 }
@@ -119,7 +123,7 @@ impl PipelineActorHandle {
         task_splitter: TaskSplitter,
         build_variant: &BuildVariant,
     ) -> Self {
-        let (sender, receiver) = mpsc::channel(32);
+        let (sender, receiver) = mpsc::channel(64);
         let mut actor = PipelineActor::new(receiver, config_dir, task_splitter, build_variant);
         tokio::spawn(async move { actor.run().await });
 
@@ -149,5 +153,12 @@ impl PipelineActorHandle {
     pub async fn write(&self, bv_name: &str, path: PathBuf) {
         let msg = PipelineMessage::Write(bv_name.to_string(), path);
         self.sender.send(msg).await.unwrap();
+    }
+
+    pub async fn flush(&self) {
+        let (send, recv) = oneshot::channel();
+        let msg = PipelineMessage::Flush(send);
+        self.sender.send(msg).await.unwrap();
+        recv.await.unwrap();
     }
 }

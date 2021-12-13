@@ -66,7 +66,6 @@ pub fn generate_test_config(
                         }
                         new_map.insert(k.clone(), Yaml::Hash(new_selector));
                     }
-                    // new_map.insert(k.clone(), map.get(k).unwrap().clone());
                 } else {
                     new_map.insert(k.clone(), map.get(k).unwrap().clone());
                 }

@@ -170,29 +170,6 @@ async fn task_def_to_split_params(
     .await
 }
 
-// async fn task_def_to_gen_params(
-//     task_def: &EvgTask,
-//     build_variant: &BuildVariant,
-//     config_location: &str,
-// ) -> ResmokeGenParams {
-//     let resmoke_args = get_gen_task_var(&task_def, "resmoke_args").unwrap();
-//     ResmokeGenParams {
-//         use_large_distro: get_gen_task_var(task_def, "use_large_distro")
-//             .map(|d| d == "true")
-//             .unwrap_or(false),
-//         large_distro_name: build_variant
-//             .expansions
-//             .as_ref()
-//             .map(|e| e.get("large_distro_name").map(|d| d.to_string()))
-//             .flatten(),
-//         require_multiversion_setup: false,
-//         repeat_suites: 1,
-//         resmoke_args: resmoke_args.to_string(),
-//         config_location: Some(config_location.to_string()),
-//         resmoke_jobs_max: None,
-//     }
-// }
-
 #[derive(Debug, StructOpt)]
 struct Opt {
     #[structopt(long, parse(from_os_str))]
@@ -233,6 +210,8 @@ async fn main() {
     };
     let pipeline_actor = PipelineActorHandle::new(config_dir, task_splitter, build_variant);
 
+    let mut history_futures = vec![];
+
     for task in &build_variant.tasks {
         if let Some(task_def) = task_map.get(&task.name) {
             if is_task_generated(task_def) {
@@ -242,16 +221,22 @@ async fn main() {
                         task_def_to_fuzzer_params(task_def, build_variant, &config_location);
                     pipeline_actor.gen_fuzzer(params).await;
                 } else {
-                    let task_history = task_def_to_split_params(
-                        &evg_client,
+                    history_futures.push((
                         task_def,
-                        &evg_expansions.build_variant,
-                    )
-                    .await;
-                    pipeline_actor.split_task(task_history, &task_def).await;
+                        task_def_to_split_params(
+                            &evg_client,
+                            task_def,
+                            &evg_expansions.build_variant,
+                        ),
+                    ));
                 }
             }
         }
+    }
+    for (task_def, history_future) in history_futures {
+        pipeline_actor
+            .split_task(history_future.await, &task_def)
+            .await;
     }
 
     pipeline_actor.generator_tasks(found_tasks).await;
@@ -259,4 +244,5 @@ async fn main() {
     let mut config_file = Path::new(config_dir).to_path_buf();
     config_file.push(format!("{}.json", &build_variant.name));
     pipeline_actor.write(&build_variant.name, config_file).await;
+    pipeline_actor.flush().await;
 }

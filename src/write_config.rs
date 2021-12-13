@@ -71,7 +71,7 @@ pub struct WriteConfigActorHandle {
 
 impl WriteConfigActorHandle {
     pub fn new(config_dir: &str) -> Self {
-        let (sender, receiver) = mpsc::channel(16);
+        let (sender, receiver) = mpsc::channel(32);
         let mut actor = WriteConfigActor::new(receiver, config_dir.to_string());
         tokio::spawn(async move { actor.run().await });
 

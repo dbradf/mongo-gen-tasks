@@ -48,6 +48,7 @@ impl GeneratorActor {
     fn handle_message(&mut self, msg: GeneratorMessage) {
         match msg {
             GeneratorMessage::ResmokeSuite(gen_suite, gen_params) => {
+                println!("Starting {}", &gen_suite.suite_name);
                 let now = Instant::now();
                 self.resmoke_gen_service
                     .generate_tasks(&gen_suite, &gen_params)
@@ -102,7 +103,7 @@ pub struct GeneratorActorHandle {
 
 impl GeneratorActorHandle {
     pub fn new() -> Self {
-        let (sender, receiver) = mpsc::channel(32);
+        let (sender, receiver) = mpsc::channel(64);
         let mut actor = GeneratorActor::new(receiver);
         tokio::spawn(async move { actor.run().await });
 
@@ -110,7 +111,7 @@ impl GeneratorActorHandle {
     }
 
     pub async fn generate_resmoke(&self, gen_suite: &GeneratedSuite, gen_params: ResmokeGenParams) {
-        let msg = GeneratorMessage::ResmokeSuite(gen_suite.clone(), gen_params);
+        let msg = GeneratorMessage::ResmokeSuite(gen_suite.clone(), gen_params.clone());
         self.sender.send(msg).await.unwrap();
     }
 
