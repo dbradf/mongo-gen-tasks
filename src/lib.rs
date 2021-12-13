@@ -7,6 +7,7 @@ use shrub_rs::models::{
 };
 use taskname::remove_gen_suffix_ref;
 
+pub mod gen_actor;
 pub mod resmoke;
 pub mod resmoke_task_gen;
 pub mod split_tasks;
@@ -14,13 +15,16 @@ pub mod task_history;
 pub mod task_types;
 pub mod taskname;
 pub mod util;
+pub mod write_config;
 
+#[derive(Clone, Debug)]
 pub struct SubSuite {
     pub index: usize,
     pub suite_name: String,
     pub test_list: Vec<String>,
 }
 
+#[derive(Clone, Debug)]
 pub struct GeneratedSuite {
     pub sub_suites: Vec<SubSuite>,
     pub build_variant: String,

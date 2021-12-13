@@ -1,29 +1,28 @@
-use rayon::prelude::*;
-use structopt::StructOpt;
 use std::{
     collections::HashSet,
     error::Error,
     path::{Path, PathBuf},
+    time::Instant,
 };
+use structopt::StructOpt;
 
 use evg_api_rs::EvgClient;
 use lazy_static::lazy_static;
 use mongo_task_gen::{
-    find_suite_name, get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
-    resmoke::{generate_test_config, ResmokeProxy},
-    resmoke_task_gen::{ResmokeGenParams, ResmokeGenService},
+    find_suite_name,
+    gen_actor::GeneratorActorHandle,
+    get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
+    resmoke::ResmokeProxy,
+    resmoke_task_gen::ResmokeGenParams,
     split_tasks::{SplitConfig, TaskSplitter},
     task_history::{get_task_history, TaskRuntimeHistory},
-    task_types::fuzzer_tasks::{generate_fuzzer_task, FuzzerGenTaskParams},
+    task_types::fuzzer_tasks::FuzzerGenTaskParams,
     taskname::remove_gen_suffix_ref,
+    write_config::WriteConfigActorHandle,
 };
 use regex::Regex;
 use serde::Deserialize;
-use shrub_rs::models::{
-    project::EvgProject,
-    task::EvgTask,
-    variant::{BuildVariant, DisplayTask},
-};
+use shrub_rs::models::{task::EvgTask, variant::BuildVariant};
 
 lazy_static! {
     static ref EXPANSION_RE: Regex =
@@ -224,15 +223,13 @@ async fn main() {
     let bv_map = evg_project.build_variant_map();
     let build_variant = bv_map.get(&evg_expansions.build_variant).unwrap();
     let config_location = &evg_expansions.config_location();
-    let resmoke_gen_service = ResmokeGenService {};
 
     let mut found_tasks = HashSet::new();
-    let mut gen_task_def = vec![];
-    let mut gen_task_specs = vec![];
-    let mut display_tasks = vec![];
 
     let config_dir = "generated_resmoke_config";
     std::fs::create_dir_all(config_dir).unwrap();
+    let write_config_actor = WriteConfigActorHandle::new(config_dir);
+    let generator_actor = GeneratorActorHandle::new();
 
     for task in &build_variant.tasks {
         if let Some(task_def) = task_map.get(&task.name) {
@@ -241,11 +238,9 @@ async fn main() {
                 if is_fuzzer_task(task_def) {
                     let params =
                         task_def_to_fuzzer_params(task_def, build_variant, &config_location);
-                    let generated_task = generate_fuzzer_task(&params);
-                    gen_task_def.extend(generated_task.sub_tasks.clone());
-                    gen_task_specs.extend(generated_task.build_task_ref());
-                    display_tasks.push(generated_task.build_display_task());
+                    generator_actor.generate_fuzzer(params).await;
                 } else {
+                    let now = Instant::now();
                     let test_discovery = ResmokeProxy {};
                     let task_history = task_def_to_split_params(
                         &evg_client,
@@ -262,58 +257,27 @@ async fn main() {
                     let gen_suite = task_splitter.split_task(&task_history);
                     let gen_params =
                         task_def_to_gen_params(task_def, &build_variant, &config_location).await;
-                    let all_tests: Vec<String> = gen_suite
-                        .sub_suites
-                        .iter()
-                        .map(|s| s.test_list.clone())
-                        .flatten()
-                        .collect();
 
-                    gen_suite.sub_suites.par_iter().for_each(|s| {
-                        let config =
-                            generate_test_config(&gen_suite.suite_name, &s.test_list, None);
-                        let mut path = PathBuf::from(config_dir);
-                        path.push(format!("{}.yml", s.name));
+                    println!(
+                        "Split time {}: {}ms",
+                        &gen_suite.suite_name,
+                        now.elapsed().as_millis()
+                    );
 
-                        std::fs::write(path, config).unwrap();
-                    });
-                    let misc_config =
-                        generate_test_config(&gen_suite.suite_name, &vec![], Some(&all_tests));
-                    let mut path = PathBuf::from(config_dir);
-                    path.push(format!("{}_misc.yml", gen_suite.task_name));
-                    std::fs::write(path, misc_config).unwrap();
-
-                    resmoke_gen_service
-                        .generate_tasks(&gen_suite, &gen_params)
-                        .into_iter()
-                        .for_each(|t| {
-                            gen_task_def.push(t.clone());
-                            gen_task_specs.push(t.get_reference(None, Some(false)));
-                        });
-                    display_tasks.push(gen_suite.display_task());
+                    write_config_actor.write_sub_suite(&gen_suite).await;
+                    generator_actor
+                        .generate_resmoke(&gen_suite, gen_params)
+                        .await;
                 }
             }
         }
     }
 
-    display_tasks.push(DisplayTask {
-        name: "generator_tasks".to_string(),
-        execution_tasks: found_tasks.into_iter().collect(),
-    });
+    generator_actor.add_generator_tasks(found_tasks).await;
 
-    let gen_build_variant = BuildVariant {
-        name: build_variant.name.clone(),
-        tasks: gen_task_specs,
-        display_tasks: Some(display_tasks),
-        ..Default::default()
-    };
-
-    let gen_evg_project = EvgProject {
-        buildvariants: vec![gen_build_variant],
-        tasks: gen_task_def,
-        ..Default::default()
-    };
-
-    println!("{}", serde_json::to_string(&gen_evg_project).unwrap());
-    // println!("{}", serde_yaml::to_string(&gen_evg_project).unwrap());
+    let mut config_file = Path::new(config_dir).to_path_buf();
+    config_file.push(format!("{}.yml", &build_variant.name));
+    generator_actor
+        .write(&build_variant.name, config_file)
+        .await;
 }

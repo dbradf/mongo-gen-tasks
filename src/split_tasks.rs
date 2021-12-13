@@ -70,7 +70,7 @@ impl TaskSplitter {
             if let Some(test_stats) = task_stats.test_map.get(&test_name) {
                 if (running_runtime + test_stats.average_runtime > runtime_per_subtask)
                     && !running_tests.is_empty()
-                    && sub_suites.len() < max_tasks
+                    && sub_suites.len() < max_tasks - 1
                 {
                     sub_suites.push(SubSuite {
                         name: format!("{}_{}", &task_stats.task_name, i),

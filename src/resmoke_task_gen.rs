@@ -26,6 +26,7 @@ impl GenerateOptions {
 }
 
 /// Parameters describing how a specific resmoke suite should be generated.
+#[derive(Clone, Debug)]
 pub struct ResmokeGenParams {
     pub use_large_distro: bool,
     pub large_distro_name: Option<String>,
@@ -82,7 +83,10 @@ fn run_test_vars(suite_file: &str, params: &ResmokeGenParams) -> HashMap<String,
         String::from("resmoke_args"),
         ParamValue::from(resmoke_args.as_str()),
     );
-    run_test_vars.insert(String::from("suite"), ParamValue::from(format!("generated_resmoke_config/{}.yml", suite_file).as_str()));
+    run_test_vars.insert(
+        String::from("suite"),
+        ParamValue::from(format!("generated_resmoke_config/{}.yml", suite_file).as_str()),
+    );
 
     if let Some(config_location) = &params.config_location {
         run_test_vars.insert(
