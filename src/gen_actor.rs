@@ -102,7 +102,7 @@ pub struct GeneratorActorHandle {
 
 impl GeneratorActorHandle {
     pub fn new() -> Self {
-        let (sender, receiver) = mpsc::channel(8);
+        let (sender, receiver) = mpsc::channel(32);
         let mut actor = GeneratorActor::new(receiver);
         tokio::spawn(async move { actor.run().await });
 

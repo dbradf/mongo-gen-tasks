@@ -2,23 +2,19 @@ use std::{
     collections::HashSet,
     error::Error,
     path::{Path, PathBuf},
-    time::Instant,
 };
 use structopt::StructOpt;
 
 use evg_api_rs::EvgClient;
 use lazy_static::lazy_static;
 use mongo_task_gen::{
-    find_suite_name,
-    gen_actor::GeneratorActorHandle,
-    get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
+    find_suite_name, get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
+    pipeline_actor::PipelineActorHandle,
     resmoke::ResmokeProxy,
-    resmoke_task_gen::ResmokeGenParams,
     split_tasks::{SplitConfig, TaskSplitter},
     task_history::{get_task_history, TaskRuntimeHistory},
     task_types::fuzzer_tasks::FuzzerGenTaskParams,
     taskname::remove_gen_suffix_ref,
-    write_config::WriteConfigActorHandle,
 };
 use regex::Regex;
 use serde::Deserialize;
@@ -174,28 +170,28 @@ async fn task_def_to_split_params(
     .await
 }
 
-async fn task_def_to_gen_params(
-    task_def: &EvgTask,
-    build_variant: &BuildVariant,
-    config_location: &str,
-) -> ResmokeGenParams {
-    let resmoke_args = get_gen_task_var(&task_def, "resmoke_args").unwrap();
-    ResmokeGenParams {
-        use_large_distro: get_gen_task_var(task_def, "use_large_distro")
-            .map(|d| d == "true")
-            .unwrap_or(false),
-        large_distro_name: build_variant
-            .expansions
-            .as_ref()
-            .map(|e| e.get("large_distro_name").map(|d| d.to_string()))
-            .flatten(),
-        require_multiversion_setup: false,
-        repeat_suites: 1,
-        resmoke_args: resmoke_args.to_string(),
-        config_location: Some(config_location.to_string()),
-        resmoke_jobs_max: None,
-    }
-}
+// async fn task_def_to_gen_params(
+//     task_def: &EvgTask,
+//     build_variant: &BuildVariant,
+//     config_location: &str,
+// ) -> ResmokeGenParams {
+//     let resmoke_args = get_gen_task_var(&task_def, "resmoke_args").unwrap();
+//     ResmokeGenParams {
+//         use_large_distro: get_gen_task_var(task_def, "use_large_distro")
+//             .map(|d| d == "true")
+//             .unwrap_or(false),
+//         large_distro_name: build_variant
+//             .expansions
+//             .as_ref()
+//             .map(|e| e.get("large_distro_name").map(|d| d.to_string()))
+//             .flatten(),
+//         require_multiversion_setup: false,
+//         repeat_suites: 1,
+//         resmoke_args: resmoke_args.to_string(),
+//         config_location: Some(config_location.to_string()),
+//         resmoke_jobs_max: None,
+//     }
+// }
 
 #[derive(Debug, StructOpt)]
 struct Opt {
@@ -228,8 +224,14 @@ async fn main() {
 
     let config_dir = "generated_resmoke_config";
     std::fs::create_dir_all(config_dir).unwrap();
-    let write_config_actor = WriteConfigActorHandle::new(config_dir);
-    let generator_actor = GeneratorActorHandle::new();
+    let test_discovery = ResmokeProxy {};
+    let task_splitter = TaskSplitter {
+        test_discovery: test_discovery,
+        split_config: SplitConfig {
+            n_suites: evg_expansions.get_max_sub_suites(),
+        },
+    };
+    let pipeline_actor = PipelineActorHandle::new(config_dir, task_splitter, build_variant);
 
     for task in &build_variant.tasks {
         if let Some(task_def) = task_map.get(&task.name) {
@@ -238,46 +240,23 @@ async fn main() {
                 if is_fuzzer_task(task_def) {
                     let params =
                         task_def_to_fuzzer_params(task_def, build_variant, &config_location);
-                    generator_actor.generate_fuzzer(params).await;
+                    pipeline_actor.gen_fuzzer(params).await;
                 } else {
-                    let now = Instant::now();
-                    let test_discovery = ResmokeProxy {};
                     let task_history = task_def_to_split_params(
                         &evg_client,
                         task_def,
                         &evg_expansions.build_variant,
                     )
                     .await;
-                    let task_splitter = TaskSplitter {
-                        test_discovery: Box::new(test_discovery),
-                        split_config: SplitConfig {
-                            n_suites: evg_expansions.get_max_sub_suites(),
-                        },
-                    };
-                    let gen_suite = task_splitter.split_task(&task_history);
-                    let gen_params =
-                        task_def_to_gen_params(task_def, &build_variant, &config_location).await;
-
-                    println!(
-                        "Split time {}: {}ms",
-                        &gen_suite.suite_name,
-                        now.elapsed().as_millis()
-                    );
-
-                    write_config_actor.write_sub_suite(&gen_suite).await;
-                    generator_actor
-                        .generate_resmoke(&gen_suite, gen_params)
-                        .await;
+                    pipeline_actor.split_task(task_history, &task_def).await;
                 }
             }
         }
     }
 
-    generator_actor.add_generator_tasks(found_tasks).await;
+    pipeline_actor.generator_tasks(found_tasks).await;
 
     let mut config_file = Path::new(config_dir).to_path_buf();
-    config_file.push(format!("{}.yml", &build_variant.name));
-    generator_actor
-        .write(&build_variant.name, config_file)
-        .await;
+    config_file.push(format!("{}.json", &build_variant.name));
+    pipeline_actor.write(&build_variant.name, config_file).await;
 }

@@ -1,4 +1,4 @@
-use crate::resmoke::TestDiscovery;
+use crate::resmoke::{ResmokeProxy, TestDiscovery};
 use crate::task_history::{get_test_name, TaskRuntimeHistory};
 use shrub_rs::models::task::TaskRef;
 use shrub_rs::models::variant::DisplayTask;
@@ -45,7 +45,7 @@ pub struct SplitConfig {
 }
 
 pub struct TaskSplitter {
-    pub test_discovery: Box<dyn TestDiscovery>,
+    pub test_discovery: ResmokeProxy,
     pub split_config: SplitConfig,
 }
 

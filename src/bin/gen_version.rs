@@ -48,7 +48,7 @@ async fn main() {
     for task_history in task_histories {
         let test_discovery = ResmokeProxy {};
         let task_splitter = TaskSplitter {
-            test_discovery: Box::new(test_discovery),
+            test_discovery: test_discovery,
             split_config: SplitConfig { n_suites: 5 },
         };
         let gen_suite = task_splitter.split_task(&task_history);
