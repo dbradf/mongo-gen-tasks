@@ -61,6 +61,7 @@ impl PipelineActor {
         config_dir: &str,
         task_splitter: TaskSplitter,
         build_variant: &BuildVariant,
+        config_location: &str,
     ) -> Self {
         Self {
             receiver,
@@ -68,7 +69,7 @@ impl PipelineActor {
             write_config_actor: WriteConfigActorHandle::new(config_dir),
             task_splitter,
             build_variant: build_variant.clone(),
-            config_location: config_dir.to_string(),
+            config_location: config_location.to_string(),
         }
     }
 
@@ -122,9 +123,16 @@ impl PipelineActorHandle {
         config_dir: &str,
         task_splitter: TaskSplitter,
         build_variant: &BuildVariant,
+        config_location: &str,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(64);
-        let mut actor = PipelineActor::new(receiver, config_dir, task_splitter, build_variant);
+        let mut actor = PipelineActor::new(
+            receiver,
+            config_dir,
+            task_splitter,
+            build_variant,
+            config_location,
+        );
         tokio::spawn(async move { actor.run().await });
 
         Self { sender }

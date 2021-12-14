@@ -203,12 +203,17 @@ async fn main() {
     std::fs::create_dir_all(config_dir).unwrap();
     let test_discovery = ResmokeProxy {};
     let task_splitter = TaskSplitter {
-        test_discovery: test_discovery,
+        test_discovery,
         split_config: SplitConfig {
             n_suites: evg_expansions.get_max_sub_suites(),
         },
     };
-    let pipeline_actor = PipelineActorHandle::new(config_dir, task_splitter, build_variant);
+    let pipeline_actor = PipelineActorHandle::new(
+        config_dir,
+        task_splitter,
+        build_variant,
+        &evg_expansions.config_location(),
+    );
 
     let mut history_futures = vec![];
 
