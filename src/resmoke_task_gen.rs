@@ -3,6 +3,7 @@ use shrub_rs::models::params::ParamValue;
 use shrub_rs::models::task::{EvgTask, TaskDependency};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tracing::{event, Level};
 
 use crate::split_tasks::GeneratedSuite;
 
@@ -38,6 +39,7 @@ pub struct ResmokeGenParams {
     pub config_location: Option<String>,
 }
 
+#[derive(Debug)]
 pub struct ResmokeGenService {
     // options: GenerateOptions,
 }
@@ -48,6 +50,11 @@ impl ResmokeGenService {
         generated_suite: &GeneratedSuite,
         params: &ResmokeGenParams,
     ) -> Vec<EvgTask> {
+        event!(
+            Level::INFO,
+            task_name = generated_suite.task_name.as_str(),
+            "Generating config"
+        );
         let tasks: Vec<EvgTask> = generated_suite
             .sub_suites
             .iter()

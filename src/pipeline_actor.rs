@@ -1,7 +1,8 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, time::Instant};
 
 use shrub_rs::models::{task::EvgTask, variant::BuildVariant};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{event, Level};
 
 use crate::{
     gen_actor::GeneratorActorHandle,
@@ -82,14 +83,37 @@ impl PipelineActor {
     async fn handle_message(&mut self, msg: PipelineMessage) {
         match msg {
             PipelineMessage::SplitTask(task_history, task_def) => {
+                let task_name = task_def.name.as_str();
+                event!(Level::INFO, task_name, "Splitting Task");
+                let start = Instant::now();
                 let gen_suite = self.task_splitter.split_task(&task_history);
+                event!(
+                    Level::INFO,
+                    task_name,
+                    duration_ms = start.elapsed().as_millis() as u64,
+                    "Split finished"
+                );
                 let gen_params =
                     task_def_to_gen_params(&task_def, &self.build_variant, &self.config_location)
                         .await;
+                let start = Instant::now();
                 self.write_config_actor.write_sub_suite(&gen_suite).await;
+                event!(
+                    Level::INFO,
+                    task_name,
+                    duration_ms = start.elapsed().as_millis() as u64,
+                    "Write config finished"
+                );
+                let start = Instant::now();
                 self.generator_actor
                     .generate_resmoke(&gen_suite, gen_params)
                     .await;
+                event!(
+                    Level::INFO,
+                    task_name,
+                    duration_ms = start.elapsed().as_millis() as u64,
+                    "Gen config finished"
+                );
             }
             PipelineMessage::GenFuzzer(fuzzer_params) => {
                 self.generator_actor.generate_fuzzer(fuzzer_params).await;

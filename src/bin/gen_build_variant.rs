@@ -19,6 +19,7 @@ use mongo_task_gen::{
 use regex::Regex;
 use serde::Deserialize;
 use shrub_rs::models::{task::EvgTask, variant::BuildVariant};
+use tracing_subscriber::fmt::format;
 
 lazy_static! {
     static ref EXPANSION_RE: Regex =
@@ -186,6 +187,10 @@ struct Opt {
 #[tokio::main]
 async fn main() {
     let opt = Opt::from_args();
+    let format = format::json();
+    let subscriber = tracing_subscriber::fmt().event_format(format).finish();
+
+    tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let evg_project_location = opt.evg_project_location;
     let evg_project = get_project_config(&evg_project_location).unwrap();
