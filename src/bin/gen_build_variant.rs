@@ -55,6 +55,7 @@ struct EvgExpansions {
 }
 
 impl EvgExpansions {
+    /// Read the expansions from a yaml file.
     pub fn from_yaml_file(path: &Path) -> Result<Self, Box<dyn Error>> {
         let contents = std::fs::read_to_string(path)?;
         Ok(serde_yaml::from_str(&contents)?)
@@ -185,6 +186,7 @@ struct Opt {
 #[tokio::main]
 async fn main() {
     let opt = Opt::from_args();
+
     let evg_project_location = opt.evg_project_location;
     let evg_project = get_project_config(&evg_project_location).unwrap();
     let expansion_file = opt.expansion_file;
@@ -208,7 +210,7 @@ async fn main() {
             n_suites: evg_expansions.get_max_sub_suites(),
         },
     };
-    let pipeline_actor = PipelineActorHandle::new(
+    let mut pipeline_actor = PipelineActorHandle::new(
         config_dir,
         task_splitter,
         build_variant,

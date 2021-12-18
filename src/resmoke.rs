@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use cmd_lib::run_fun;
 use yaml_rust::{yaml::Hash, Yaml, YamlEmitter, YamlLoader};
 
@@ -5,6 +7,7 @@ pub trait TestDiscovery {
     fn discover_tests(&self, suite: &str) -> Vec<String>;
 }
 
+#[derive(Debug, Clone)]
 pub struct ResmokeProxy {}
 
 impl TestDiscovery for ResmokeProxy {
@@ -13,7 +16,11 @@ impl TestDiscovery for ResmokeProxy {
             python buildscripts/resmoke.py discover --suite $suite
         )
         .unwrap();
-        cmd_output.split("\n").map(|s| s.to_string()).collect()
+        cmd_output
+            .split("\n")
+            .map(|s| s.to_string())
+            .filter(|f| Path::new(f).exists())
+            .collect()
     }
 }
 

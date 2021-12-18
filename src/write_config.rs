@@ -68,7 +68,7 @@ pub struct WriteConfigActorHandle {
 
 impl WriteConfigActorHandle {
     pub fn new(config_dir: &str) -> Self {
-        let count = 10;
+        let count = 32;
         let senders_and_revievers: Vec<(
             mpsc::Sender<WriteConfigMessage>,
             mpsc::Receiver<WriteConfigMessage>,

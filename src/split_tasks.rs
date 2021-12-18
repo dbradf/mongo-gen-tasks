@@ -3,6 +3,7 @@ use crate::task_history::{get_test_name, TaskRuntimeHistory};
 use shrub_rs::models::task::TaskRef;
 use shrub_rs::models::variant::DisplayTask;
 use std::cmp::min;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct SubSuite {
@@ -40,10 +41,12 @@ impl GeneratedSuite {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SplitConfig {
     pub n_suites: usize,
 }
 
+#[derive(Clone)]
 pub struct TaskSplitter {
     pub test_discovery: ResmokeProxy,
     pub split_config: SplitConfig,
@@ -52,7 +55,13 @@ pub struct TaskSplitter {
 impl TaskSplitter {
     pub fn split_task(&self, task_stats: &TaskRuntimeHistory) -> GeneratedSuite {
         let suite_name = &task_stats.suite_name;
-        let test_list = self.test_discovery.discover_tests(suite_name);
+        let test_list: Vec<String> = self
+            .test_discovery
+            .discover_tests(suite_name)
+            .into_iter()
+            .filter(|s| Path::new(s).exists())
+            .collect();
+
         let total_runtime = task_stats
             .test_map
             .iter()
