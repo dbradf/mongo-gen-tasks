@@ -1,16 +1,17 @@
 use std::path::PathBuf;
 
 use rayon::prelude::*;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     resmoke::{read_suite_config, update_config},
     split_tasks::GeneratedSuite,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 enum WriteConfigMessage {
     SuiteFiles(GeneratedSuite),
+    Flush(oneshot::Sender<()>),
 }
 
 #[derive(Debug)]
@@ -56,6 +57,7 @@ impl WriteConfigActor {
                 path.push(format!("{}_misc.yml", gen_suite.task_name));
                 std::fs::write(path, misc_config).unwrap();
             }
+            WriteConfigMessage::Flush(sender) => sender.send(()).unwrap(),
         }
     }
 }
@@ -94,5 +96,14 @@ impl WriteConfigActorHandle {
     pub async fn write_sub_suite(&mut self, gen_suite: &GeneratedSuite) {
         let msg = WriteConfigMessage::SuiteFiles(gen_suite.clone());
         self.round_robbin(msg).await;
+    }
+
+    pub async fn flush(&mut self) {
+        for sender in &self.senders {
+            let (send, recv) = oneshot::channel();
+            let msg = WriteConfigMessage::Flush(send);
+            sender.send(msg).await.unwrap();
+            recv.await.unwrap();
+        }
     }
 }

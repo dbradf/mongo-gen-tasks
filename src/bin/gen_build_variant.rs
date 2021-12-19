@@ -2,6 +2,8 @@ use std::{
     collections::HashSet,
     error::Error,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::Instant,
 };
 use structopt::StructOpt;
 
@@ -11,14 +13,21 @@ use mongo_task_gen::{
     find_suite_name, get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
     pipeline_actor::PipelineActorHandle,
     resmoke::ResmokeProxy,
+    resmoke_task_gen::{ResmokeGenParams, ResmokeGenService},
     split_tasks::{SplitConfig, TaskSplitter},
     task_history::{get_task_history, TaskRuntimeHistory},
-    task_types::fuzzer_tasks::FuzzerGenTaskParams,
+    task_types::fuzzer_tasks::{generate_fuzzer_task, FuzzerGenTaskParams},
     taskname::remove_gen_suffix_ref,
+    write_config::WriteConfigActorHandle,
 };
 use regex::Regex;
 use serde::Deserialize;
-use shrub_rs::models::{task::EvgTask, variant::BuildVariant};
+use shrub_rs::models::{
+    project::EvgProject,
+    task::{EvgTask, TaskRef},
+    variant::{BuildVariant, DisplayTask},
+};
+use tracing::{event, Level};
 use tracing_subscriber::fmt::format;
 
 lazy_static! {
@@ -159,17 +168,52 @@ fn task_def_to_fuzzer_params(
 
 async fn task_def_to_split_params(
     evg_client: &EvgClient,
-    task_def: &EvgTask,
+    task_name: &str,
+    suite_name: &str,
     build_variant: &str,
 ) -> TaskRuntimeHistory {
-    let task_name = remove_gen_suffix_ref(&task_def.name);
-    get_task_history(
-        evg_client,
-        task_name,
-        build_variant,
-        find_suite_name(task_def),
-    )
-    .await
+    let task_name = remove_gen_suffix_ref(task_name);
+    get_task_history(evg_client, task_name, build_variant, suite_name).await
+}
+
+async fn task_def_to_gen_params(
+    task_def: &EvgTask,
+    build_variant: &BuildVariant,
+    config_location: &str,
+) -> ResmokeGenParams {
+    let resmoke_args = get_gen_task_var(&task_def, "resmoke_args").unwrap_or("");
+    ResmokeGenParams {
+        use_large_distro: get_gen_task_var(task_def, "use_large_distro")
+            .map(|d| d == "true")
+            .unwrap_or(false),
+        large_distro_name: build_variant
+            .expansions
+            .as_ref()
+            .map(|e| e.get("large_distro_name").map(|d| d.to_string()))
+            .flatten(),
+        require_multiversion_setup: false,
+        repeat_suites: 1,
+        resmoke_args: resmoke_args.to_string(),
+        config_location: Some(config_location.to_string()),
+        resmoke_jobs_max: None,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GeneratedConfig {
+    pub gen_task_def: Vec<EvgTask>,
+    pub gen_task_specs: Vec<TaskRef>,
+    pub display_tasks: Vec<DisplayTask>,
+}
+
+impl GeneratedConfig {
+    pub fn new() -> Self {
+        Self {
+            gen_task_def: vec![],
+            gen_task_specs: vec![],
+            display_tasks: vec![],
+        }
+    }
 }
 
 #[derive(Debug, StructOpt)]
@@ -197,7 +241,7 @@ async fn main() {
     let expansion_file = opt.expansion_file;
     let evg_expansions = EvgExpansions::from_yaml_file(Path::new(&expansion_file)).unwrap();
 
-    let evg_client = EvgClient::from_file(&opt.evg_auth_file).unwrap();
+    let evg_client = Arc::new(EvgClient::from_file(&opt.evg_auth_file).unwrap());
 
     let task_map = evg_project.task_def_map();
     let bv_map = evg_project.build_variant_map();
@@ -209,52 +253,137 @@ async fn main() {
     let config_dir = "generated_resmoke_config";
     std::fs::create_dir_all(config_dir).unwrap();
     let test_discovery = ResmokeProxy {};
-    let task_splitter = TaskSplitter {
+    let task_splitter = Arc::new(TaskSplitter {
         test_discovery,
         split_config: SplitConfig {
             n_suites: evg_expansions.get_max_sub_suites(),
         },
-    };
-    let mut pipeline_actor = PipelineActorHandle::new(
+    });
+    let write_config_actor = Arc::new(tokio::sync::Mutex::new(WriteConfigActorHandle::new(
         config_dir,
-        task_splitter,
-        build_variant,
-        &evg_expansions.config_location(),
-    );
+    )));
+    let resmoke_gen_service = Arc::new(ResmokeGenService {});
+    // let mut pipeline_actor = PipelineActorHandle::new(
+    //     config_dir,
+    //     task_splitter,
+    //     build_variant,
+    //     &evg_expansions.config_location(),
+    // );
 
-    let mut history_futures = vec![];
+    let mut handles = vec![];
+    let generated_config = Arc::new(Mutex::new(GeneratedConfig::new()));
 
     for task in &build_variant.tasks {
         if let Some(task_def) = task_map.get(&task.name) {
+            let task_def = task_def.clone();
             if is_task_generated(task_def) {
+                let gc = generated_config.clone();
                 found_tasks.insert(task_def.name.clone());
                 if is_fuzzer_task(task_def) {
                     let params =
                         task_def_to_fuzzer_params(task_def, build_variant, &config_location);
-                    pipeline_actor.gen_fuzzer(params).await;
+
+                    handles.push(tokio::spawn(async move {
+                        let generated_task = generate_fuzzer_task(&params);
+                        let mut gen_config = gc.lock().unwrap();
+                        gen_config
+                            .gen_task_specs
+                            .extend(generated_task.build_task_ref());
+                        gen_config
+                            .display_tasks
+                            .push(generated_task.build_display_task());
+                        gen_config.gen_task_def.extend(generated_task.sub_tasks);
+                    }));
                 } else {
-                    history_futures.push((
-                        task_def,
-                        task_def_to_split_params(
-                            &evg_client,
-                            task_def,
-                            &evg_expansions.build_variant,
-                        ),
-                    ));
+                    let ts = task_splitter.clone();
+                    let bv = build_variant.clone();
+                    let config_loc = config_location.clone();
+                    let write_actor = write_config_actor.clone();
+                    let rs_gen_service = resmoke_gen_service.clone();
+                    let evg_api = evg_client.clone();
+                    let task_name = task_def.name.to_string();
+                    let suite_name = find_suite_name(task_def).to_string();
+                    let bv_name = bv.name.to_string();
+                    let gen_params = task_def_to_gen_params(&task_def, bv, &config_loc).await;
+
+                    handles.push(tokio::spawn(async move {
+                        let task_name = task_name.as_str();
+                        let task_history =
+                            task_def_to_split_params(&evg_api, task_name, &suite_name, &bv_name)
+                                .await;
+                        event!(Level::INFO, task_name, "Splitting Task");
+                        let start = Instant::now();
+                        let gen_suite = ts.split_task(&task_history);
+                        event!(
+                            Level::INFO,
+                            task_name,
+                            duration_ms = start.elapsed().as_millis() as u64,
+                            "Split finished"
+                        );
+                        // let gen_params = task_def_to_gen_params(&task_def, bv, &config_loc).await;
+                        let start = Instant::now();
+                        {
+                            let mut writer = write_actor.lock().await;
+                            writer.write_sub_suite(&gen_suite).await;
+                        }
+                        event!(
+                            Level::INFO,
+                            task_name,
+                            duration_ms = start.elapsed().as_millis() as u64,
+                            "Write config finished"
+                        );
+                        let start = Instant::now();
+                        let mut gen_config = gc.lock().unwrap();
+                        rs_gen_service
+                            .generate_tasks(&gen_suite, &gen_params)
+                            .into_iter()
+                            .for_each(|t| {
+                                gen_config.gen_task_def.push(t.clone());
+                                gen_config
+                                    .gen_task_specs
+                                    .push(t.get_reference(None, Some(false)));
+                            });
+                        gen_config.display_tasks.push(gen_suite.display_task());
+
+                        event!(
+                            Level::INFO,
+                            task_name,
+                            duration_ms = start.elapsed().as_millis() as u64,
+                            "Gen config finished"
+                        );
+                    }));
                 }
             }
         }
     }
-    for (task_def, history_future) in history_futures {
-        pipeline_actor
-            .split_task(history_future.await, &task_def)
-            .await;
-    }
 
-    pipeline_actor.generator_tasks(found_tasks).await;
+    for handle in handles {
+        handle.await.unwrap();
+    }
 
     let mut config_file = Path::new(config_dir).to_path_buf();
     config_file.push(format!("{}.json", &build_variant.name));
-    pipeline_actor.write(&build_variant.name, config_file).await;
-    pipeline_actor.flush().await;
+
+    let gen_config = generated_config.lock().unwrap();
+
+    let gen_build_variant = BuildVariant {
+        name: build_variant.name.clone(),
+        tasks: gen_config.gen_task_specs.clone(),
+        display_tasks: Some(gen_config.display_tasks.clone()),
+        ..Default::default()
+    };
+
+    let gen_evg_project = EvgProject {
+        buildvariants: vec![gen_build_variant],
+        tasks: gen_config.gen_task_def.clone(),
+        ..Default::default()
+    };
+
+    std::fs::write(
+        config_file,
+        serde_json::to_string(&gen_evg_project).unwrap(),
+    )
+    .unwrap();
+    let mut write_actor = write_config_actor.lock().await;
+    write_actor.flush().await;
 }
