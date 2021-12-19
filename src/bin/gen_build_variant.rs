@@ -11,7 +11,6 @@ use evg_api_rs::EvgClient;
 use lazy_static::lazy_static;
 use mongo_task_gen::{
     find_suite_name, get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
-    pipeline_actor::PipelineActorHandle,
     resmoke::ResmokeProxy,
     resmoke_task_gen::{ResmokeGenParams, ResmokeGenService},
     split_tasks::{SplitConfig, TaskSplitter},

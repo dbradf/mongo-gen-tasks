@@ -65,6 +65,10 @@ pub fn update_config(
                                 );
                             }
                         } else {
+                            let exclude_key = Yaml::from_str("exclude_files");
+                            if new_selector.contains_key(&exclude_key) {
+                                new_selector.remove(&exclude_key);
+                            }
                             new_selector.insert(
                                 Yaml::from_str("roots"),
                                 Yaml::Array(test_list.iter().map(|t| Yaml::from_str(t)).collect()),
