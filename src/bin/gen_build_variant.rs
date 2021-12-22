@@ -12,8 +12,7 @@ use lazy_static::lazy_static;
 use mongo_task_gen::{
     find_suite_name, get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
     resmoke::ResmokeProxy,
-    resmoke_task_gen::{ResmokeGenParams, ResmokeGenService},
-    split_tasks::{SplitConfig, TaskSplitter},
+    split_tasks::{ResmokeGenParams, SplitConfig, TaskSplitter},
     task_history::{get_task_history, TaskRuntimeHistory},
     task_types::fuzzer_tasks::{generate_fuzzer_task, FuzzerGenTaskParams},
     taskname::remove_gen_suffix_ref,
@@ -261,13 +260,6 @@ async fn main() {
     let write_config_actor = Arc::new(tokio::sync::Mutex::new(WriteConfigActorHandle::new(
         config_dir,
     )));
-    let resmoke_gen_service = Arc::new(ResmokeGenService {});
-    // let mut pipeline_actor = PipelineActorHandle::new(
-    //     config_dir,
-    //     task_splitter,
-    //     build_variant,
-    //     &evg_expansions.config_location(),
-    // );
 
     let mut handles = vec![];
     let generated_config = Arc::new(Mutex::new(GeneratedConfig::new()));
@@ -298,7 +290,6 @@ async fn main() {
                     let bv = build_variant.clone();
                     let config_loc = config_location.clone();
                     let write_actor = write_config_actor.clone();
-                    let rs_gen_service = resmoke_gen_service.clone();
                     let evg_api = evg_client.clone();
                     let task_name = task_def.name.to_string();
                     let suite_name = find_suite_name(task_def).to_string();
@@ -333,15 +324,19 @@ async fn main() {
                         );
                         let start = Instant::now();
                         let mut gen_config = gc.lock().unwrap();
-                        rs_gen_service
-                            .generate_tasks(&gen_suite, &gen_params)
-                            .into_iter()
-                            .for_each(|t| {
-                                gen_config.gen_task_def.push(t.clone());
-                                gen_config
-                                    .gen_task_specs
-                                    .push(t.get_reference(None, Some(false)));
-                            });
+                        gen_config
+                            .gen_task_def
+                            .extend(gen_suite.execution_tasks(&gen_params));
+                        gen_config.gen_task_specs.extend(gen_suite.task_refs());
+                        // rs_gen_service
+                        //     .generate_tasks(&gen_suite, &gen_params)
+                        //     .into_iter()
+                        //     .for_each(|t| {
+                        //         gen_config.gen_task_def.push(t.clone());
+                        //         gen_config
+                        //             .gen_task_specs
+                        //             .push(t.get_reference(None, Some(false)));
+                        //     });
                         gen_config.display_tasks.push(gen_suite.display_task());
 
                         event!(

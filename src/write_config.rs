@@ -3,10 +3,7 @@ use std::path::PathBuf;
 use rayon::prelude::*;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{
-    resmoke::{read_suite_config, update_config},
-    split_tasks::GeneratedSuite,
-};
+use crate::{resmoke::ResmokeSuiteConfig, split_tasks::GeneratedSuite};
 
 #[derive(Debug)]
 enum WriteConfigMessage {
@@ -37,10 +34,10 @@ impl WriteConfigActor {
     fn handle_message(&mut self, msg: WriteConfigMessage) {
         match msg {
             WriteConfigMessage::SuiteFiles(gen_suite) => {
-                let base_config = read_suite_config(&gen_suite.suite_name);
+                let base_config = ResmokeSuiteConfig::read_suite_config(&gen_suite.suite_name);
 
                 gen_suite.sub_suites.par_iter().for_each(|s| {
-                    let config = update_config(&base_config, &s.test_list, None);
+                    let config = base_config.update_config(&s.test_list, None);
                     let mut path = PathBuf::from(&self.config_dir);
                     path.push(format!("{}.yml", s.name));
 
@@ -52,7 +49,7 @@ impl WriteConfigActor {
                     .map(|s| s.test_list.clone())
                     .flatten()
                     .collect();
-                let misc_config = update_config(&base_config, &vec![], Some(&all_tests));
+                let misc_config = base_config.update_config(&vec![], Some(&all_tests));
                 let mut path = PathBuf::from(&self.config_dir);
                 path.push(format!("{}_misc.yml", gen_suite.task_name));
                 std::fs::write(path, misc_config).unwrap();
