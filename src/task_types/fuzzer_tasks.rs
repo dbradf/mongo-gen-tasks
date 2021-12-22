@@ -6,8 +6,9 @@ use shrub_rs::models::{
     task::{EvgTask, TaskDependency, TaskRef},
     variant::DisplayTask,
 };
+use tracing::{event, Level};
 
-use crate::util::name_generated_task;
+use crate::{resmoke::ResmokeSuiteConfig, util::name_generated_task};
 
 #[derive(Debug)]
 pub struct FuzzerTask {
@@ -65,6 +66,7 @@ pub struct FuzzerGenTaskParams {
     pub large_distro_name: Option<String>,
     /// Location of generated task configuration.
     pub config_location: String,
+    pub suite_config: ResmokeSuiteConfig,
 }
 
 impl FuzzerGenTaskParams {
@@ -85,7 +87,11 @@ impl FuzzerGenTaskParams {
         vars
     }
 
-    fn build_run_tests_vars(&self) -> HashMap<String, ParamValue> {
+    fn build_run_tests_vars(
+        &self,
+        suite_name: Option<&str>,
+        bin_version: Option<&str>,
+    ) -> HashMap<String, ParamValue> {
         let mut vars = HashMap::new();
         vars.insert(
             "continue_on_failure".to_string(),
@@ -119,37 +125,137 @@ impl FuzzerGenTaskParams {
             "gen_task_config_location".to_string(),
             ParamValue::from(self.config_location.as_str()),
         );
-        vars.insert("suite".to_string(), ParamValue::from(self.suite.as_str()));
+        if let Some(suite) = suite_name {
+            vars.insert("suite".to_string(), ParamValue::from(suite));
+        } else {
+            vars.insert("suite".to_string(), ParamValue::from(self.suite.as_str()));
+        }
+
+        if let Some(bin_version) = bin_version {
+            vars.insert(
+                "multiversion_exclude_tags_version".to_string(),
+                ParamValue::from(bin_version),
+            );
+        }
 
         vars
     }
-}
 
-pub fn generate_fuzzer_task(params: &FuzzerGenTaskParams) -> FuzzerTask {
-    let sub_tasks: Vec<EvgTask> = (0..params.num_tasks)
-        .map(|i| build_fuzzer_sub_task(i, params))
-        .collect();
-
-    FuzzerTask {
-        task_name: params.task_name.to_string(),
-        sub_tasks,
+    pub fn get_version_combination(&self) -> Vec<String> {
+        self.suite_config
+            .get_fixture_type()
+            .unwrap()
+            .get_version_combinations()
     }
 }
 
-fn build_fuzzer_sub_task(task_index: u64, params: &FuzzerGenTaskParams) -> EvgTask {
+#[derive(Debug, Clone)]
+pub struct GenFuzzerService {
+    last_versions: Vec<String>,
+}
+
+impl GenFuzzerService {
+    pub fn new(last_versions: &Vec<String>) -> Self {
+        Self {
+            last_versions: last_versions.clone(),
+        }
+    }
+    pub fn generate_fuzzer_task(&self, params: &FuzzerGenTaskParams) -> FuzzerTask {
+        let task_name = &params.task_name;
+        let mut sub_tasks: Vec<EvgTask> = vec![];
+        if params.require_multiversion_setup.unwrap_or(false) {
+            let version_combinations = &params.get_version_combination();
+            event!(
+                Level::INFO,
+                task_name = task_name.as_str(),
+                "Generating multiversion fuzzer"
+            );
+            for version in &self.last_versions {
+                for mixed_bin_version in version_combinations {
+                    let base_task_name =
+                        Self::build_name(&params.task_name, version, mixed_bin_version);
+                    let base_suite_name =
+                        Self::build_name(&params.suite, version, mixed_bin_version);
+
+                    sub_tasks.extend(
+                        (0..params.num_tasks)
+                            .map(|i| {
+                                build_fuzzer_sub_task(
+                                    &base_task_name,
+                                    i,
+                                    params,
+                                    Some(&base_suite_name),
+                                    Some(&mixed_bin_version),
+                                )
+                            })
+                            .collect::<Vec<EvgTask>>(),
+                    );
+                }
+            }
+        } else {
+            sub_tasks = (0..params.num_tasks)
+                .map(|i| build_fuzzer_sub_task(&params.task_name, i, params, None, None))
+                .collect();
+        }
+
+        FuzzerTask {
+            task_name: params.task_name.to_string(),
+            sub_tasks,
+        }
+    }
+
+    fn build_name(base_name: &str, old_version: &str, mixed_bin_version: &str) -> String {
+        [base_name, old_version, mixed_bin_version]
+            .iter()
+            .filter_map(|p| {
+                if p.len() > 0 {
+                    Some(p.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("_")
+    }
+}
+
+fn build_fuzzer_sub_task(
+    task_name: &str,
+    task_index: u64,
+    params: &FuzzerGenTaskParams,
+    suite_name: Option<&str>,
+    bin_version: Option<&str>,
+) -> EvgTask {
     let sub_task_name = name_generated_task(
-        &params.task_name,
+        task_name,
         Some(task_index),
         Some(params.num_tasks),
         Some(&params.variant),
     );
-    let commands = vec![
+    let mut commands = vec![];
+    if params.require_multiversion_setup.unwrap_or(false) {
+        commands.extend(vec![
+            fn_call("git get project no modules"),
+            fn_call("add git tag"),
+        ]);
+    }
+    commands.extend(vec![
         fn_call("do setup"),
         fn_call("configure evergreen api credentials"),
+    ]);
+
+    if params.require_multiversion_setup.unwrap_or(false) {
+        commands.push(fn_call("do multiversion setup"));
+    }
+
+    commands.extend(vec![
         fn_call("setup jstestfuzz"),
         fn_call_with_params("run jstestfuzz", params.build_jstestfuzz_vars()),
-        fn_call_with_params("run generated tests", params.build_run_tests_vars()),
-    ];
+        fn_call_with_params(
+            "run generated tests",
+            params.build_run_tests_vars(suite_name, bin_version),
+        ),
+    ]);
 
     EvgTask {
         name: sub_task_name.to_string(),
@@ -159,5 +265,31 @@ fn build_fuzzer_sub_task(task_index: u64, params: &FuzzerGenTaskParams) -> EvgTa
             variant: None,
         }]),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::*;
+
+    // build_name
+    #[rstest]
+    #[case(
+        "agg_fuzzer",
+        "last_lts",
+        "new_old_new",
+        "agg_fuzzer_last_lts_new_old_new"
+    )]
+    #[case("agg_fuzzer", "last_lts", "", "agg_fuzzer_last_lts")]
+    fn test_build_name(
+        #[case] base_name: &str,
+        #[case] version: &str,
+        #[case] bin_version: &str,
+        #[case] expected: &str,
+    ) {
+        let name = GenFuzzerService::build_name(base_name, version, bin_version);
+
+        assert_eq!(name, expected);
     }
 }

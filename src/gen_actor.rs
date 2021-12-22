@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use crate::{
     resmoke_task_gen::{ResmokeGenParams, ResmokeGenService},
     split_tasks::GeneratedSuite,
-    task_types::fuzzer_tasks::{generate_fuzzer_task, FuzzerGenTaskParams},
+    task_types::fuzzer_tasks::FuzzerGenTaskParams,
 };
 
 #[derive(Clone, Debug)]
@@ -80,10 +80,10 @@ impl GeneratorActor {
                 std::fs::write(path, serde_json::to_string(&gen_evg_project).unwrap()).unwrap();
             }
             GeneratorMessage::FuzzerSuite(params) => {
-                let generated_task = generate_fuzzer_task(&params);
-                self.gen_task_def.extend(generated_task.sub_tasks.clone());
-                self.gen_task_specs.extend(generated_task.build_task_ref());
-                self.display_tasks.push(generated_task.build_display_task());
+                // let generated_task = generate_fuzzer_task(&params);
+                // self.gen_task_def.extend(generated_task.sub_tasks.clone());
+                // self.gen_task_specs.extend(generated_task.build_task_ref());
+                // self.display_tasks.push(generated_task.build_display_task());
             }
         }
     }

@@ -11,10 +11,10 @@ use evg_api_rs::EvgClient;
 use lazy_static::lazy_static;
 use mongo_task_gen::{
     find_suite_name, get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
-    resmoke::ResmokeProxy,
+    resmoke::{MultiversionConfig, ResmokeProxy, ResmokeSuiteConfig},
     split_tasks::{ResmokeGenParams, SplitConfig, TaskSplitter},
     task_history::{get_task_history, TaskRuntimeHistory},
-    task_types::fuzzer_tasks::{generate_fuzzer_task, FuzzerGenTaskParams},
+    task_types::fuzzer_tasks::{FuzzerGenTaskParams, GenFuzzerService},
     taskname::remove_gen_suffix_ref,
     write_config::WriteConfigActorHandle,
 };
@@ -118,10 +118,13 @@ fn task_def_to_fuzzer_params(
     )
     .unwrap();
 
+    let suite = find_suite_name(task_def).to_string();
+    let suite_config = ResmokeSuiteConfig::read_suite_config(&suite);
+    println!("{} tags={:?}", &task_def.name, &task_def.tags);
     FuzzerGenTaskParams {
         task_name: remove_gen_suffix_ref(&task_def.name).to_string(),
         variant: build_variant.name.to_string(),
-        suite: find_suite_name(task_def).to_string(),
+        suite,
         num_files: num_files.parse().unwrap(),
         num_tasks: get_gen_task_var(task_def, "num_tasks")
             .unwrap()
@@ -161,6 +164,7 @@ fn task_def_to_fuzzer_params(
             .map(|d| d.parse().unwrap()),
         large_distro_name: large_distro_name.clone(),
         config_location: config_location.to_string(),
+        suite_config,
     }
 }
 
@@ -260,6 +264,10 @@ async fn main() {
     let write_config_actor = Arc::new(tokio::sync::Mutex::new(WriteConfigActorHandle::new(
         config_dir,
     )));
+    let multiversion_config = MultiversionConfig::from_resmoke();
+    let gen_fuzzer_service = Arc::new(GenFuzzerService::new(
+        &multiversion_config.multiversion_config.last_versions,
+    ));
 
     let mut handles = vec![];
     let generated_config = Arc::new(Mutex::new(GeneratedConfig::new()));
@@ -271,11 +279,13 @@ async fn main() {
                 let gc = generated_config.clone();
                 found_tasks.insert(task_def.name.clone());
                 if is_fuzzer_task(task_def) {
+                    let gen_fuzzer = gen_fuzzer_service.clone();
                     let params =
                         task_def_to_fuzzer_params(task_def, build_variant, &config_location);
 
                     handles.push(tokio::spawn(async move {
-                        let generated_task = generate_fuzzer_task(&params);
+                        let generated_task = gen_fuzzer.generate_fuzzer_task(&params);
+                        // let generated_task = generate_fuzzer_task(&params);
                         let mut gen_config = gc.lock().unwrap();
                         gen_config
                             .gen_task_specs

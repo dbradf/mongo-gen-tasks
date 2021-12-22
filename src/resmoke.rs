@@ -2,6 +2,7 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 use cmd_lib::run_fun;
+use serde::Deserialize;
 use yaml_rust::{yaml::Hash, Yaml, YamlEmitter, YamlLoader};
 
 pub trait TestDiscovery {
@@ -25,6 +26,26 @@ impl TestDiscovery for ResmokeProxy {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct MultiversionConfigContents {
+    pub last_versions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MultiversionConfig {
+    pub multiversion_config: MultiversionConfigContents,
+}
+
+impl MultiversionConfig {
+    pub fn from_resmoke() -> MultiversionConfig {
+        let cmd_output = run_fun!(
+            python buildscripts/resmoke.py multiversion-config
+        )
+        .unwrap();
+        serde_yaml::from_str(&cmd_output).unwrap()
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum SuiteFixtureType {
     Shell,
@@ -41,11 +62,12 @@ impl SuiteFixtureType {
                 .iter()
                 .map(|v| v.to_string())
                 .collect(),
-            _ => vec![],
+            _ => vec!["".to_string()],
         }
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ResmokeSuiteConfig {
     config: Yaml,
 }
