@@ -61,6 +61,8 @@ struct EvgExpansions {
     pub target_resmoke_time: Option<String>,
     /// ID of task doing the generation.
     pub task_id: String,
+    /// ID of Evergreen version running.
+    pub version_id: String,
 }
 
 impl EvgExpansions {
@@ -81,10 +83,9 @@ impl EvgExpansions {
     }
 
     pub fn config_location(&self) -> String {
-        let generated_task_name = remove_gen_suffix_ref(&self.task_name);
         format!(
-            "{}/{}/generate_tasks/{}_gen-{}.tgz",
-            self.build_variant, self.revision, generated_task_name, self.build_id
+            "{}/generate_tasks/generated-config-{}.tgz",
+            self.revision, &self.version_id
         )
     }
 }
