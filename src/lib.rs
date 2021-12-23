@@ -7,7 +7,6 @@ use shrub_rs::models::{
 };
 use taskname::remove_gen_suffix_ref;
 
-pub mod gen_actor;
 pub mod resmoke;
 pub mod resmoke_task_gen;
 pub mod split_tasks;

@@ -86,7 +86,7 @@ pub struct TaskSplitter {
 }
 
 impl TaskSplitter {
-    pub fn split_task(&self, task_stats: &TaskRuntimeHistory) -> GeneratedSuite {
+    pub fn split_task(&self, task_stats: &TaskRuntimeHistory, bv_name: &str) -> GeneratedSuite {
         let suite_name = &task_stats.suite_name;
         let test_list: Vec<String> = self
             .test_discovery
@@ -115,7 +115,7 @@ impl TaskSplitter {
                     && sub_suites.len() < max_tasks - 1
                 {
                     sub_suites.push(SubSuite {
-                        name: format!("{}_{}", &task_stats.task_name, i),
+                        name: format!("{}_{}_{}", &task_stats.task_name, i, bv_name),
                         test_list: running_tests.clone(),
                     });
                     running_tests = vec![];
@@ -128,7 +128,7 @@ impl TaskSplitter {
         }
         if !running_tests.is_empty() {
             sub_suites.push(SubSuite {
-                name: format!("{}_{}", &task_stats.task_name, i),
+                name: format!("{}_{}_{}", &task_stats.task_name, i, bv_name),
                 test_list: running_tests.clone(),
             });
         }

@@ -120,7 +120,6 @@ fn task_def_to_fuzzer_params(
 
     let suite = find_suite_name(task_def).to_string();
     let suite_config = ResmokeSuiteConfig::read_suite_config(&suite);
-    println!("{} tags={:?}", &task_def.name, &task_def.tags);
     FuzzerGenTaskParams {
         task_name: remove_gen_suffix_ref(&task_def.name).to_string(),
         variant: build_variant.name.to_string(),
@@ -313,7 +312,7 @@ async fn main() {
                                 .await;
                         event!(Level::INFO, task_name, "Splitting Task");
                         let start = Instant::now();
-                        let gen_suite = ts.split_task(&task_history);
+                        let gen_suite = ts.split_task(&task_history, &bv_name);
                         event!(
                             Level::INFO,
                             task_name,
@@ -338,15 +337,6 @@ async fn main() {
                             .gen_task_def
                             .extend(gen_suite.execution_tasks(&gen_params));
                         gen_config.gen_task_specs.extend(gen_suite.task_refs());
-                        // rs_gen_service
-                        //     .generate_tasks(&gen_suite, &gen_params)
-                        //     .into_iter()
-                        //     .for_each(|t| {
-                        //         gen_config.gen_task_def.push(t.clone());
-                        //         gen_config
-                        //             .gen_task_specs
-                        //             .push(t.get_reference(None, Some(false)));
-                        //     });
                         gen_config.display_tasks.push(gen_suite.display_task());
 
                         event!(
