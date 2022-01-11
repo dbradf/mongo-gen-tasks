@@ -356,6 +356,7 @@ async fn main() {
                 name: build_variant.name.clone(),
                 tasks: gen_config.gen_task_specs.clone(),
                 display_tasks: Some(gen_config.display_tasks.clone()),
+                activate: Some(false),
                 ..Default::default()
             };
             let mut generated_build_variants = generated_build_variants.lock().unwrap();
