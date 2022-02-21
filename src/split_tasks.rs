@@ -7,6 +7,7 @@ use shrub_rs::models::variant::DisplayTask;
 use std::cmp::min;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Parameters describing how a specific resmoke suite should be generated.
 #[derive(Clone, Debug)]
@@ -79,14 +80,18 @@ pub struct SplitConfig {
     pub n_suites: usize,
 }
 
+pub trait TaskSplitting: Send + Sync {
+    fn split_task(&self, task_stats: &TaskRuntimeHistory, bv_name: &str) -> GeneratedSuite;
+}
+
 #[derive(Clone)]
 pub struct TaskSplitter {
-    pub test_discovery: ResmokeProxy,
+    pub test_discovery: Arc<dyn TestDiscovery>,
     pub split_config: SplitConfig,
 }
 
-impl TaskSplitter {
-    pub fn split_task(&self, task_stats: &TaskRuntimeHistory, bv_name: &str) -> GeneratedSuite {
+impl TaskSplitting for TaskSplitter {
+    fn split_task(&self, task_stats: &TaskRuntimeHistory, bv_name: &str) -> GeneratedSuite {
         let suite_name = &task_stats.suite_name;
         let test_list: Vec<String> = self
             .test_discovery

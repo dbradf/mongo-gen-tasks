@@ -11,8 +11,8 @@ use evg_api_rs::EvgClient;
 use lazy_static::lazy_static;
 use mongo_task_gen::{
     find_suite_name, get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
-    resmoke::{MultiversionConfig, ResmokeProxy, ResmokeSuiteConfig},
-    split_tasks::{GeneratedSuite, ResmokeGenParams, SplitConfig, TaskSplitter},
+    resmoke::{MultiversionConfig, ResmokeProxy, ResmokeSuiteConfig, TestDiscovery},
+    split_tasks::{GeneratedSuite, ResmokeGenParams, SplitConfig, TaskSplitter, TaskSplitting},
     task_history::{get_task_history, TaskRuntimeHistory},
     task_types::fuzzer_tasks::{FuzzerGenTaskParams, GenFuzzerService},
     taskname::remove_gen_suffix_ref,
@@ -33,6 +33,8 @@ lazy_static! {
     static ref EXPANSION_RE: Regex =
         Regex::new(r"\$\{(?P<id>[a-zA-Z0-9_]+)(\|(?P<default>.*))?}").unwrap();
 }
+
+const CONFIG_DIR: &str = "generated_resmoke_config";
 
 /// Data extracted from Evergreen expansions.
 #[derive(Debug, Deserialize, Clone)]
@@ -231,6 +233,61 @@ struct Opt {
     evg_auth_file: PathBuf,
 }
 
+pub struct EvgProjectConfig {
+    evg_project: EvgProject,
+}
+
+impl EvgProjectConfig {
+    pub fn new(evg_project_location: &Path) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            evg_project: get_project_config(evg_project_location)?,
+        })
+    }
+
+    pub fn get_build_variant_map(&self) -> HashMap<String, &BuildVariant> {
+        self.evg_project.build_variant_map()
+    }
+
+    pub fn get_task_def_map(&self) -> HashMap<String, &EvgTask> {
+        self.evg_project.task_def_map()
+    }
+}
+
+struct Dependencies {
+    pub test_discovery: Arc<dyn TestDiscovery>,
+    pub task_splitter: Arc<dyn TaskSplitting>,
+    pub gen_task_actor: Arc<GenTaskActorHandle>,
+    pub write_config_actor: Arc<tokio::sync::Mutex<WriteConfigActorHandle>>,
+}
+
+impl Dependencies {
+    pub fn new(evg_expansions: &EvgExpansions, evg_auth_file: &Path) -> Self {
+        let evg_client = Arc::new(EvgClient::from_file(evg_auth_file).unwrap());
+        let test_discovery = Arc::new(ResmokeProxy {});
+        let task_splitter = Arc::new(TaskSplitter {
+            test_discovery: test_discovery.clone(),
+            split_config: SplitConfig {
+                n_suites: evg_expansions.get_max_sub_suites(),
+            },
+        });
+        let write_config_actor = Arc::new(tokio::sync::Mutex::new(WriteConfigActorHandle::new(
+            CONFIG_DIR,
+        )));
+        let gen_task_actor = Arc::new(GenTaskActorHandle::new(
+            evg_client.clone(),
+            task_splitter.clone(),
+            write_config_actor.clone(),
+        ));
+
+        Self {
+            gen_task_actor,
+            test_discovery,
+            task_splitter,
+            write_config_actor,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let opt = Opt::from_args();
@@ -240,35 +297,18 @@ async fn main() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let evg_project_location = opt.evg_project_location;
-    let evg_project = Arc::new(get_project_config(&evg_project_location).unwrap());
+    let evg_project = Arc::new(EvgProjectConfig::new(&evg_project_location).unwrap());
     let expansion_file = opt.expansion_file;
     let evg_expansions = EvgExpansions::from_yaml_file(Path::new(&expansion_file)).unwrap();
 
-    let evg_client = Arc::new(EvgClient::from_file(&opt.evg_auth_file).unwrap());
-
     let config_location = evg_expansions.config_location().to_string();
 
-    let config_dir = "generated_resmoke_config";
-    std::fs::create_dir_all(config_dir).unwrap();
-    let test_discovery = ResmokeProxy {};
-    let task_splitter = Arc::new(TaskSplitter {
-        test_discovery,
-        split_config: SplitConfig {
-            n_suites: evg_expansions.get_max_sub_suites(),
-        },
-    });
-    let write_config_actor = Arc::new(tokio::sync::Mutex::new(WriteConfigActorHandle::new(
-        config_dir,
-    )));
+    std::fs::create_dir_all(CONFIG_DIR).unwrap();
+    let deps = Arc::new(Dependencies::new(&evg_expansions, &opt.evg_auth_file));
+
     let multiversion_config = MultiversionConfig::from_resmoke();
     let gen_fuzzer_service = Arc::new(GenFuzzerService::new(
         &multiversion_config.multiversion_config.last_versions,
-    ));
-
-    let get_task_actor = Arc::new(GenTaskActorHandle::new(
-        evg_client.clone(),
-        task_splitter.clone(),
-        write_config_actor.clone(),
     ));
 
     let task_definitions = Arc::new(Mutex::new(vec![]));
@@ -276,7 +316,7 @@ async fn main() {
     let seen_tasks = Arc::new(Mutex::new(HashSet::new()));
     let mut bv_handles = vec![];
 
-    for (_bv_name, build_variant) in evg_project.build_variant_map() {
+    for (_bv_name, build_variant) in evg_project.get_build_variant_map() {
         let build_variant = build_variant.clone();
         let evg_project = evg_project.clone();
         let gen_fuzzer_service = gen_fuzzer_service.clone();
@@ -284,11 +324,11 @@ async fn main() {
 
         let generated_build_variants = generated_build_variants.clone();
         let task_definitions = task_definitions.clone();
-        let get_task_actor = get_task_actor.clone();
         let seen_tasks = seen_tasks.clone();
+        let deps = deps.clone();
 
         bv_handles.push(tokio::spawn(async move {
-            let task_map = evg_project.task_def_map();
+            let task_map = evg_project.get_task_def_map();
             let mut handles = vec![];
             let generated_config = Arc::new(Mutex::new(GeneratedConfig::new()));
 
@@ -317,7 +357,6 @@ async fn main() {
                                 gen_config.gen_task_def.extend(generated_task.sub_tasks);
                             }));
                         } else {
-                            let get_task_actor = get_task_actor.clone();
                             let bv = build_variant.clone();
                             let task_name = task_def.name.to_string();
                             let suite_name = find_suite_name(task_def).to_string();
@@ -325,9 +364,11 @@ async fn main() {
                             let config_loc = config_location.clone();
                             let gen_params = task_def_to_gen_params(&task_def, &bv, &config_loc);
                             let seen_tasks = seen_tasks.clone();
+                            let deps = deps.clone();
 
                             handles.push(tokio::spawn(async move {
-                                let gen_suite = get_task_actor
+                                let gen_task_actor = deps.gen_task_actor.clone();
+                                let gen_suite = gen_task_actor
                                     .get_task(&task_name, &suite_name, &bv_name)
                                     .await;
                                 let mut gen_config = gc.lock().unwrap();
@@ -370,7 +411,7 @@ async fn main() {
         handle.await.unwrap();
     }
 
-    let mut config_file = Path::new(config_dir).to_path_buf();
+    let mut config_file = Path::new(CONFIG_DIR).to_path_buf();
     config_file.push(format!("evergreen_config.json"));
 
     let generated_build_variants = generated_build_variants.lock().unwrap();
@@ -387,6 +428,7 @@ async fn main() {
         serde_json::to_string(&gen_evg_project).unwrap(),
     )
     .unwrap();
+    let write_config_actor = deps.write_config_actor.clone();
     let mut write_actor = write_config_actor.lock().await;
     write_actor.flush().await;
 }
@@ -411,7 +453,7 @@ struct GenTaskActor {
     waiting_tasks: HashMap<String, Vec<oneshot::Sender<GeneratedSuite>>>,
 
     evg_api: Arc<EvgClient>,
-    task_splitter: Arc<TaskSplitter>,
+    task_splitter: Arc<dyn TaskSplitting>,
     write_actor: Arc<tokio::sync::Mutex<WriteConfigActorHandle>>,
 }
 
@@ -419,7 +461,7 @@ impl GenTaskActor {
     fn new(
         receiver: mpsc::Receiver<GenTaskMessage>,
         evg_api: Arc<EvgClient>,
-        task_splitter: Arc<TaskSplitter>,
+        task_splitter: Arc<dyn TaskSplitting>,
         write_actor: Arc<tokio::sync::Mutex<WriteConfigActorHandle>>,
     ) -> Self {
         GenTaskActor {
@@ -517,7 +559,7 @@ pub struct GenTaskActorHandle {
 impl GenTaskActorHandle {
     pub fn new(
         evg_api: Arc<EvgClient>,
-        task_splitter: Arc<TaskSplitter>,
+        task_splitter: Arc<dyn TaskSplitting>,
         write_actor: Arc<tokio::sync::Mutex<WriteConfigActorHandle>>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(128);

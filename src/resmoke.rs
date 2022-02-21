@@ -5,7 +5,7 @@ use cmd_lib::run_fun;
 use serde::Deserialize;
 use yaml_rust::{yaml::Hash, Yaml, YamlEmitter, YamlLoader};
 
-pub trait TestDiscovery {
+pub trait TestDiscovery: Send + Sync {
     fn discover_tests(&self, suite: &str) -> Vec<String>;
 }
 
