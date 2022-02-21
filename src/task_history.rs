@@ -123,18 +123,18 @@ pub async fn get_task_history(
 }
 
 fn is_hook(test_file: &str) -> bool {
-    test_file.contains(":")
+    test_file.contains(':')
 }
 
 fn hook_test_name(test_file: &str) -> &str {
-    test_file.split(":").next().unwrap()
+    test_file.split(':').next().unwrap()
 }
 
 fn hook_hook_name(test_file: &str) -> &str {
-    test_file.split(":").last().unwrap()
+    test_file.split(':').last().unwrap()
 }
 
 pub fn get_test_name(test_file: &str) -> String {
-    let s = test_file.split("/");
+    let s = test_file.split('/');
     s.last().unwrap().trim_end_matches(".js").to_string()
 }

@@ -55,7 +55,7 @@ pub fn get_generate_resmoke_func(task: &EvgTask) -> Option<&FunctionCall> {
     let command = task
         .commands
         .iter()
-        .filter(|c| {
+        .find(|c| {
             if let Function(func) = c {
                 if func.func == "generate resmoke tasks" {
                     return true;
@@ -63,7 +63,6 @@ pub fn get_generate_resmoke_func(task: &EvgTask) -> Option<&FunctionCall> {
             }
             false
         })
-        .nth(0)
         .unwrap();
     if let Function(func) = command {
         return Some(func);
@@ -75,11 +74,8 @@ pub fn get_gen_task_var<'a>(task: &'a EvgTask, var: &str) -> Option<&'a str> {
     let generate_func = get_generate_resmoke_func(task);
     if let Some(func) = generate_func {
         if let Some(vars) = &func.vars {
-            if let Some(value) = vars.get(var) {
-                match value {
-                    ParamValue::String(value) => return Some(value),
-                    _ => (),
-                }
+            if let Some(ParamValue::String(value)) = vars.get(var) {
+                return Some(value);
             }
         }
     }

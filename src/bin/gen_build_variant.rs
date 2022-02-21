@@ -158,12 +158,12 @@ fn task_def_to_fuzzer_params(
             task_def
                 .tags
                 .clone()
-                .unwrap_or(vec![])
+                .unwrap_or_default()
                 .contains(&"multiversion".to_string()),
         ),
         use_large_distro: get_gen_task_var(task_def, "use_large_distro")
             .map(|d| d.parse().unwrap()),
-        large_distro_name: large_distro_name.clone(),
+        large_distro_name,
         config_location: config_location.to_string(),
         suite_config,
     }
@@ -184,7 +184,7 @@ async fn task_def_to_gen_params(
     build_variant: &BuildVariant,
     config_location: &str,
 ) -> ResmokeGenParams {
-    let resmoke_args = get_gen_task_var(&task_def, "resmoke_args").unwrap_or("");
+    let resmoke_args = get_gen_task_var(task_def, "resmoke_args").unwrap_or("");
     ResmokeGenParams {
         use_large_distro: get_gen_task_var(task_def, "use_large_distro")
             .map(|d| d == "true")
@@ -293,14 +293,14 @@ async fn main() {
 
     for task in &build_variant.tasks {
         if let Some(task_def) = task_map.get(&task.name) {
-            let task_def = task_def.clone();
+            let task_def = *task_def;
             if is_task_generated(task_def) {
                 let gc = generated_config.clone();
                 found_tasks.insert(task_def.name.clone());
                 if is_fuzzer_task(task_def) {
                     let gen_fuzzer = gen_fuzzer_service.clone();
                     let params =
-                        task_def_to_fuzzer_params(task_def, build_variant, &config_location);
+                        task_def_to_fuzzer_params(task_def, build_variant, config_location);
 
                     handles.push(tokio::spawn(async move {
                         let generated_task = gen_fuzzer.generate_fuzzer_task(&params);
@@ -315,14 +315,14 @@ async fn main() {
                     }));
                 } else {
                     let deps = deps.clone();
-                    let bv = build_variant.clone();
+                    let bv = *build_variant;
                     let config_loc = config_location.clone();
                     let write_actor = deps.write_config_actor.clone();
                     let evg_api = deps.evg_client.clone();
                     let task_name = task_def.name.to_string();
                     let suite_name = find_suite_name(task_def).to_string();
                     let bv_name = bv.name.to_string();
-                    let gen_params = task_def_to_gen_params(&task_def, bv, &config_loc).await;
+                    let gen_params = task_def_to_gen_params(task_def, bv, &config_loc).await;
 
                     handles.push(tokio::spawn(async move {
                         let task_name = task_name.as_str();

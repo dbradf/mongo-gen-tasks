@@ -49,7 +49,7 @@ impl WriteConfigActor {
                     .map(|s| s.test_list.clone())
                     .flatten()
                     .collect();
-                let misc_config = base_config.update_config(&vec![], Some(&all_tests));
+                let misc_config = base_config.update_config(&[], Some(&all_tests));
                 let mut path = PathBuf::from(&self.config_dir);
                 path.push(format!("{}_misc.yml", gen_suite.task_name));
                 std::fs::write(path, misc_config).unwrap();
@@ -68,12 +68,9 @@ pub struct WriteConfigActorHandle {
 impl WriteConfigActorHandle {
     pub fn new(config_dir: &str) -> Self {
         let count = 32;
-        let senders_and_revievers: Vec<(
-            mpsc::Sender<WriteConfigMessage>,
-            mpsc::Receiver<WriteConfigMessage>,
-        )> = (0..count).map(|_| mpsc::channel(32)).collect();
+        let senders_and_receivers = (0..count).map(|_| mpsc::channel(32));
         let mut senders = vec![];
-        senders_and_revievers
+        senders_and_receivers
             .into_iter()
             .for_each(|(sender, receiver)| {
                 senders.push(sender);

@@ -160,12 +160,12 @@ fn task_def_to_fuzzer_params(
             task_def
                 .tags
                 .clone()
-                .unwrap_or(vec![])
+                .unwrap_or_default()
                 .contains(&"multiversion".to_string()),
         ),
         use_large_distro: get_gen_task_var(task_def, "use_large_distro")
             .map(|d| d.parse().unwrap()),
-        large_distro_name: large_distro_name.clone(),
+        large_distro_name,
         config_location: config_location.to_string(),
         suite_config,
     }
@@ -186,7 +186,7 @@ fn task_def_to_gen_params(
     build_variant: &BuildVariant,
     config_location: &str,
 ) -> ResmokeGenParams {
-    let resmoke_args = get_gen_task_var(&task_def, "resmoke_args").unwrap_or("");
+    let resmoke_args = get_gen_task_var(task_def, "resmoke_args").unwrap_or("");
     ResmokeGenParams {
         use_large_distro: get_gen_task_var(task_def, "use_large_distro")
             .map(|d| d == "true")
@@ -274,7 +274,7 @@ impl Dependencies {
             CONFIG_DIR,
         )));
         let gen_task_actor = Arc::new(GenTaskActorHandle::new(
-            evg_client.clone(),
+            evg_client,
             task_splitter.clone(),
             write_config_actor.clone(),
         ));
@@ -334,7 +334,7 @@ async fn main() {
 
             for task in &build_variant.tasks {
                 if let Some(task_def) = task_map.get(&task.name) {
-                    let task_def = task_def.clone();
+                    let task_def = *task_def;
                     if is_task_generated(task_def) {
                         let gc = generated_config.clone();
                         if is_fuzzer_task(task_def) {
@@ -362,7 +362,7 @@ async fn main() {
                             let suite_name = find_suite_name(task_def).to_string();
                             let bv_name = bv.name.to_string();
                             let config_loc = config_location.clone();
-                            let gen_params = task_def_to_gen_params(&task_def, &bv, &config_loc);
+                            let gen_params = task_def_to_gen_params(task_def, &bv, &config_loc);
                             let seen_tasks = seen_tasks.clone();
                             let deps = deps.clone();
 
@@ -412,7 +412,7 @@ async fn main() {
     }
 
     let mut config_file = Path::new(CONFIG_DIR).to_path_buf();
-    config_file.push(format!("evergreen_config.json"));
+    config_file.push("evergreen_config.json".to_string());
 
     let generated_build_variants = generated_build_variants.lock().unwrap();
     let task_definitions = task_definitions.lock().unwrap();
@@ -486,47 +486,41 @@ impl GenTaskActor {
             } => {
                 if let Some(generated_task) = self.generated_tasks.get(&task_name) {
                     let _ = respond_to.send(generated_task.clone());
+                } else if let Some(waiting_tasks) = self.waiting_tasks.get_mut(&task_name) {
+                    waiting_tasks.push(respond_to);
                 } else {
-                    if let Some(waiting_tasks) = self.waiting_tasks.get_mut(&task_name) {
-                        waiting_tasks.push(respond_to);
-                    } else {
-                        self.waiting_tasks
-                            .insert(task_name.to_string(), vec![respond_to]);
-                        let task_name = task_name.to_string();
-                        let evg_api = self.evg_api.clone();
-                        let ts = self.task_splitter.clone();
-                        let write_actor = self.write_actor.clone();
+                    self.waiting_tasks
+                        .insert(task_name.to_string(), vec![respond_to]);
+                    let task_name = task_name.to_string();
+                    let evg_api = self.evg_api.clone();
+                    let ts = self.task_splitter.clone();
+                    let write_actor = self.write_actor.clone();
 
-                        tokio::spawn(async move {
-                            let task_name = task_name.as_str();
-                            let task_history = task_def_to_split_params(
-                                &evg_api,
-                                task_name,
-                                &suite_name,
-                                &bv_name,
-                            )
-                            .await;
-                            event!(Level::INFO, task_name, "Splitting Task");
-                            let start = Instant::now();
-                            let gen_suite = ts.split_task(&task_history, &bv_name);
-                            event!(
-                                Level::INFO,
-                                task_name,
-                                duration_ms = start.elapsed().as_millis() as u64,
-                                "Split finished"
-                            );
-                            {
-                                let mut writer = write_actor.lock().await;
-                                writer.write_sub_suite(&gen_suite).await;
-                            }
+                    tokio::spawn(async move {
+                        let task_name = task_name.as_str();
+                        let task_history =
+                            task_def_to_split_params(&evg_api, task_name, &suite_name, &bv_name)
+                                .await;
+                        event!(Level::INFO, task_name, "Splitting Task");
+                        let start = Instant::now();
+                        let gen_suite = ts.split_task(&task_history, &bv_name);
+                        event!(
+                            Level::INFO,
+                            task_name,
+                            duration_ms = start.elapsed().as_millis() as u64,
+                            "Split finished"
+                        );
+                        {
+                            let mut writer = write_actor.lock().await;
+                            writer.write_sub_suite(&gen_suite).await;
+                        }
 
-                            let msg = GenTaskMessage::AddTask {
-                                task_name: task_name.to_string(),
-                                gen_suite,
-                            };
-                            let _ = sender.send(msg).await;
-                        });
-                    }
+                        let msg = GenTaskMessage::AddTask {
+                            task_name: task_name.to_string(),
+                            gen_suite,
+                        };
+                        let _ = sender.send(msg).await;
+                    });
                 }
             }
             GenTaskMessage::AddTask {

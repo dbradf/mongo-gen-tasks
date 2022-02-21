@@ -81,7 +81,7 @@ impl FuzzerGenTaskParams {
             ParamValue::String(format!(
                 "--numGeneratedFiles {} {}",
                 self.num_files,
-                self.jstestfuzz_vars.clone().unwrap_or("".to_string())
+                self.jstestfuzz_vars.clone().unwrap_or_default()
             )),
         );
         vars
@@ -155,9 +155,9 @@ pub struct GenFuzzerService {
 }
 
 impl GenFuzzerService {
-    pub fn new(last_versions: &Vec<String>) -> Self {
+    pub fn new(last_versions: &[String]) -> Self {
         Self {
-            last_versions: last_versions.clone(),
+            last_versions: last_versions.to_owned(),
         }
     }
     pub fn generate_fuzzer_task(&self, params: &FuzzerGenTaskParams) -> FuzzerTask {
@@ -185,7 +185,7 @@ impl GenFuzzerService {
                                     i,
                                     params,
                                     Some(&base_suite_name),
-                                    Some(&mixed_bin_version),
+                                    Some(mixed_bin_version),
                                 )
                             })
                             .collect::<Vec<EvgTask>>(),
@@ -208,7 +208,7 @@ impl GenFuzzerService {
         [base_name, old_version, mixed_bin_version]
             .iter()
             .filter_map(|p| {
-                if p.len() > 0 {
+                if !p.is_empty() {
                     Some(p.to_string())
                 } else {
                     None
@@ -258,7 +258,7 @@ fn build_fuzzer_sub_task(
     ]);
 
     EvgTask {
-        name: sub_task_name.to_string(),
+        name: sub_task_name,
         commands,
         depends_on: Some(vec![TaskDependency {
             name: "archive_dist_test_debug".to_string(),

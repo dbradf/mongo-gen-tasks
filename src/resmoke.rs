@@ -1,9 +1,9 @@
-use std::path::Path;
+use std::{path::Path, str::FromStr};
 
 use anyhow::{bail, Result};
 use cmd_lib::run_fun;
 use serde::Deserialize;
-use yaml_rust::{yaml::Hash, Yaml, YamlEmitter, YamlLoader};
+use yaml_rust::{yaml::Hash, ScanError, Yaml, YamlEmitter, YamlLoader};
 
 pub trait TestDiscovery: Send + Sync {
     fn discover_tests(&self, suite: &str) -> Vec<String>;
@@ -19,7 +19,7 @@ impl TestDiscovery for ResmokeProxy {
         )
         .unwrap();
         cmd_output
-            .split("\n")
+            .split('\n')
             .map(|s| s.to_string())
             .filter(|f| Path::new(f).exists())
             .collect()
@@ -72,20 +72,24 @@ pub struct ResmokeSuiteConfig {
     config: Yaml,
 }
 
+impl FromStr for ResmokeSuiteConfig {
+    type Err = ScanError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let suite_config = YamlLoader::load_from_str(s)?;
+        Ok(Self {
+            config: suite_config[0].to_owned(),
+        })
+    }
+}
+
 impl ResmokeSuiteConfig {
     pub fn read_suite_config(suite_name: &str) -> Self {
         let cmd_output = run_fun!(
             python buildscripts/resmoke.py suiteconfig --suite $suite_name
         )
         .unwrap();
-        Self::from_str(&cmd_output)
-    }
-
-    pub fn from_str(suite_contents: &str) -> Self {
-        let suite_config = YamlLoader::load_from_str(suite_contents).unwrap();
-        Self {
-            config: suite_config[0].clone(),
-        }
+        Self::from_str(&cmd_output).unwrap()
     }
 
     pub fn get_fixture_type(&self) -> Result<SuiteFixtureType> {
@@ -129,66 +133,57 @@ impl ResmokeSuiteConfig {
         }
     }
 
-    pub fn update_config(
-        &self,
-        test_list: &Vec<String>,
-        all_tests: Option<&Vec<String>>,
-    ) -> String {
+    pub fn update_config(&self, test_list: &[String], all_tests: Option<&Vec<String>>) -> String {
         let mut new_map = Hash::new();
-        match &self.config {
-            Yaml::Hash(map) => {
-                for k in map.keys() {
-                    if k.as_str() == Some("selector") {
-                        if let Yaml::Hash(selector) = map.get(k).unwrap() {
-                            let mut new_selector = selector.clone();
-                            if let Some(all_tests) = all_tests {
-                                if let Some(excluded_files) =
-                                    selector.get(&Yaml::from_str("exclude_files"))
-                                {
-                                    if let Yaml::Array(excluded_file_list) = excluded_files {
-                                        let mut new_excluced_files = excluded_file_list.clone();
-                                        new_excluced_files.extend(
-                                            all_tests
-                                                .iter()
-                                                .map(|t| Yaml::from_str(t))
-                                                .collect::<Vec<Yaml>>(),
-                                        );
-                                        new_selector.insert(
-                                            Yaml::from_str("exclude_files"),
-                                            Yaml::Array(new_excluced_files),
-                                        );
-                                    }
-                                } else {
+        if let Yaml::Hash(map) = &self.config {
+            for k in map.keys() {
+                if k.as_str() == Some("selector") {
+                    if let Yaml::Hash(selector) = map.get(k).unwrap() {
+                        let mut new_selector = selector.clone();
+                        if let Some(all_tests) = all_tests {
+                            if let Some(excluded_files) =
+                                selector.get(&Yaml::from_str("exclude_files"))
+                            {
+                                if let Yaml::Array(excluded_file_list) = excluded_files {
+                                    let mut new_excluced_files = excluded_file_list.clone();
+                                    new_excluced_files.extend(
+                                        all_tests
+                                            .iter()
+                                            .map(|t| Yaml::from_str(t))
+                                            .collect::<Vec<Yaml>>(),
+                                    );
                                     new_selector.insert(
                                         Yaml::from_str("exclude_files"),
-                                        Yaml::Array(
-                                            all_tests
-                                                .iter()
-                                                .map(|t| Yaml::from_str(t))
-                                                .collect::<Vec<Yaml>>(),
-                                        ),
+                                        Yaml::Array(new_excluced_files),
                                     );
                                 }
                             } else {
-                                let exclude_key = Yaml::from_str("exclude_files");
-                                if new_selector.contains_key(&exclude_key) {
-                                    new_selector.remove(&exclude_key);
-                                }
                                 new_selector.insert(
-                                    Yaml::from_str("roots"),
+                                    Yaml::from_str("exclude_files"),
                                     Yaml::Array(
-                                        test_list.iter().map(|t| Yaml::from_str(t)).collect(),
+                                        all_tests
+                                            .iter()
+                                            .map(|t| Yaml::from_str(t))
+                                            .collect::<Vec<Yaml>>(),
                                     ),
                                 );
                             }
-                            new_map.insert(k.clone(), Yaml::Hash(new_selector));
+                        } else {
+                            let exclude_key = Yaml::from_str("exclude_files");
+                            if new_selector.contains_key(&exclude_key) {
+                                new_selector.remove(&exclude_key);
+                            }
+                            new_selector.insert(
+                                Yaml::from_str("roots"),
+                                Yaml::Array(test_list.iter().map(|t| Yaml::from_str(t)).collect()),
+                            );
                         }
-                    } else {
-                        new_map.insert(k.clone(), map.get(k).unwrap().clone());
+                        new_map.insert(k.clone(), Yaml::Hash(new_selector));
                     }
+                } else {
+                    new_map.insert(k.clone(), map.get(k).unwrap().clone());
                 }
             }
-            _ => (),
         }
 
         let mut out_str = String::new();
@@ -224,7 +219,7 @@ mod tests {
                   nodb: '' 
         ";
 
-        let config = ResmokeSuiteConfig::from_str(config_yaml);
+        let config = ResmokeSuiteConfig::from_str(config_yaml).unwrap();
 
         assert_eq!(config.get_fixture_type().unwrap(), SuiteFixtureType::Shell);
     }
@@ -252,7 +247,7 @@ mod tests {
                 num_shards: 2
         ";
 
-        let config = ResmokeSuiteConfig::from_str(config_yaml);
+        let config = ResmokeSuiteConfig::from_str(config_yaml).unwrap();
 
         assert_eq!(config.get_fixture_type().unwrap(), SuiteFixtureType::Shard);
     }
@@ -280,7 +275,7 @@ mod tests {
                 num_nodes: 3
         ";
 
-        let config = ResmokeSuiteConfig::from_str(config_yaml);
+        let config = ResmokeSuiteConfig::from_str(config_yaml).unwrap();
 
         assert_eq!(config.get_fixture_type().unwrap(), SuiteFixtureType::Repl);
     }
@@ -307,7 +302,7 @@ mod tests {
                 num_nodes: 3
         ";
 
-        let config = ResmokeSuiteConfig::from_str(config_yaml);
+        let config = ResmokeSuiteConfig::from_str(config_yaml).unwrap();
 
         assert_eq!(config.get_fixture_type().unwrap(), SuiteFixtureType::Other);
     }
