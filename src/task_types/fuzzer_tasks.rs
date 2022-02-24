@@ -149,18 +149,39 @@ impl FuzzerGenTaskParams {
     }
 }
 
+pub trait GenFuzzerService: Sync + Send {
+    fn generate_fuzzer_task(&self, params: &FuzzerGenTaskParams) -> FuzzerTask;
+}
+
 #[derive(Debug, Clone)]
-pub struct GenFuzzerService {
+pub struct GenFuzzerServiceImpl {
     last_versions: Vec<String>,
 }
 
-impl GenFuzzerService {
+impl GenFuzzerServiceImpl {
     pub fn new(last_versions: &[String]) -> Self {
         Self {
             last_versions: last_versions.to_owned(),
         }
     }
-    pub fn generate_fuzzer_task(&self, params: &FuzzerGenTaskParams) -> FuzzerTask {
+
+    fn build_name(base_name: &str, old_version: &str, mixed_bin_version: &str) -> String {
+        [base_name, old_version, mixed_bin_version]
+            .iter()
+            .filter_map(|p| {
+                if !p.is_empty() {
+                    Some(p.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("_")
+    }
+}
+
+impl GenFuzzerService for GenFuzzerServiceImpl {
+    fn generate_fuzzer_task(&self, params: &FuzzerGenTaskParams) -> FuzzerTask {
         let task_name = &params.task_name;
         let mut sub_tasks: Vec<EvgTask> = vec![];
         if params.require_multiversion_setup.unwrap_or(false) {
@@ -202,20 +223,6 @@ impl GenFuzzerService {
             task_name: params.task_name.to_string(),
             sub_tasks,
         }
-    }
-
-    fn build_name(base_name: &str, old_version: &str, mixed_bin_version: &str) -> String {
-        [base_name, old_version, mixed_bin_version]
-            .iter()
-            .filter_map(|p| {
-                if !p.is_empty() {
-                    Some(p.to_string())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<String>>()
-            .join("_")
     }
 }
 
@@ -288,7 +295,7 @@ mod tests {
         #[case] bin_version: &str,
         #[case] expected: &str,
     ) {
-        let name = GenFuzzerService::build_name(base_name, version, bin_version);
+        let name = GenFuzzerServiceImpl::build_name(base_name, version, bin_version);
 
         assert_eq!(name, expected);
     }

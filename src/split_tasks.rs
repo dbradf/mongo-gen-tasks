@@ -1,4 +1,4 @@
-use crate::resmoke::{ResmokeProxy, TestDiscovery};
+use crate::resmoke::TestDiscovery;
 use crate::task_history::{get_test_name, TaskRuntimeHistory};
 use shrub_rs::models::commands::{fn_call, fn_call_with_params, EvgCommand};
 use shrub_rs::models::params::ParamValue;

@@ -145,8 +145,8 @@ impl ResmokeSuiteConfig {
                                 selector.get(&Yaml::from_str("exclude_files"))
                             {
                                 if let Yaml::Array(excluded_file_list) = excluded_files {
-                                    let mut new_excluced_files = excluded_file_list.clone();
-                                    new_excluced_files.extend(
+                                    let mut new_excluded_files = excluded_file_list.clone();
+                                    new_excluded_files.extend(
                                         all_tests
                                             .iter()
                                             .map(|t| Yaml::from_str(t))
@@ -154,7 +154,7 @@ impl ResmokeSuiteConfig {
                                     );
                                     new_selector.insert(
                                         Yaml::from_str("exclude_files"),
-                                        Yaml::Array(new_excluced_files),
+                                        Yaml::Array(new_excluded_files),
                                     );
                                 }
                             } else {

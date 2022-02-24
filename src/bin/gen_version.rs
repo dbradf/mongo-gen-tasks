@@ -14,7 +14,7 @@ use mongo_task_gen::{
     resmoke::{MultiversionConfig, ResmokeProxy, ResmokeSuiteConfig, TestDiscovery},
     split_tasks::{GeneratedSuite, ResmokeGenParams, SplitConfig, TaskSplitter, TaskSplitting},
     task_history::{get_task_history, TaskRuntimeHistory},
-    task_types::fuzzer_tasks::{FuzzerGenTaskParams, GenFuzzerService},
+    task_types::fuzzer_tasks::{FuzzerGenTaskParams, GenFuzzerService, GenFuzzerServiceImpl},
     taskname::remove_gen_suffix_ref,
     write_config::WriteConfigActorHandle,
 };
@@ -39,10 +39,6 @@ const CONFIG_DIR: &str = "generated_resmoke_config";
 /// Data extracted from Evergreen expansions.
 #[derive(Debug, Deserialize, Clone)]
 struct EvgExpansions {
-    /// ID of build being run under.
-    pub build_id: String,
-    /// Build variant be generated.
-    pub build_variant: String,
     /// Whether a patch build is being generated.
     pub is_patch: Option<String>,
     /// Evergreen project being generated on.
@@ -57,8 +53,6 @@ struct EvgExpansions {
     pub resmoke_repeat_suites: Option<usize>,
     /// Git revision being run against.
     pub revision: String,
-    /// Name of task doing the generation.
-    pub task_name: String,
     /// Target runtime for generated tasks.
     pub target_resmoke_time: Option<String>,
     /// ID of task doing the generation.
@@ -256,12 +250,17 @@ impl EvgProjectConfig {
 struct Dependencies {
     pub test_discovery: Arc<dyn TestDiscovery>,
     pub task_splitter: Arc<dyn TaskSplitting>,
+    pub gen_fuzzer_service: Arc<dyn GenFuzzerService>,
     pub gen_task_actor: Arc<GenTaskActorHandle>,
     pub write_config_actor: Arc<tokio::sync::Mutex<WriteConfigActorHandle>>,
 }
 
 impl Dependencies {
-    pub fn new(evg_expansions: &EvgExpansions, evg_auth_file: &Path) -> Self {
+    pub fn new(
+        evg_expansions: &EvgExpansions,
+        evg_auth_file: &Path,
+        last_versions: &[String],
+    ) -> Self {
         let evg_client = Arc::new(EvgClient::from_file(evg_auth_file).unwrap());
         let test_discovery = Arc::new(ResmokeProxy {});
         let task_splitter = Arc::new(TaskSplitter {
@@ -270,6 +269,7 @@ impl Dependencies {
                 n_suites: evg_expansions.get_max_sub_suites(),
             },
         });
+        let gen_fuzzer_service = Arc::new(GenFuzzerServiceImpl::new(last_versions));
         let write_config_actor = Arc::new(tokio::sync::Mutex::new(WriteConfigActorHandle::new(
             CONFIG_DIR,
         )));
@@ -281,6 +281,7 @@ impl Dependencies {
 
         Self {
             gen_task_actor,
+            gen_fuzzer_service,
             test_discovery,
             task_splitter,
             write_config_actor,
@@ -304,10 +305,10 @@ async fn main() {
     let config_location = evg_expansions.config_location().to_string();
 
     std::fs::create_dir_all(CONFIG_DIR).unwrap();
-    let deps = Arc::new(Dependencies::new(&evg_expansions, &opt.evg_auth_file));
-
     let multiversion_config = MultiversionConfig::from_resmoke();
-    let gen_fuzzer_service = Arc::new(GenFuzzerService::new(
+    let deps = Arc::new(Dependencies::new(
+        &evg_expansions,
+        &opt.evg_auth_file,
         &multiversion_config.multiversion_config.last_versions,
     ));
 
@@ -319,7 +320,7 @@ async fn main() {
     for (_bv_name, build_variant) in evg_project.get_build_variant_map() {
         let build_variant = build_variant.clone();
         let evg_project = evg_project.clone();
-        let gen_fuzzer_service = gen_fuzzer_service.clone();
+        let gen_fuzzer_service = deps.gen_fuzzer_service.clone();
         let config_location = config_location.to_string();
 
         let generated_build_variants = generated_build_variants.clone();
