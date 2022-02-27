@@ -1,8 +1,9 @@
-use std::{path::Path, str::FromStr};
+use std::{path::Path, str::FromStr, time::Instant};
 
 use anyhow::{bail, Result};
 use cmd_lib::run_fun;
 use serde::Deserialize;
+use tracing::{event, Level};
 use yaml_rust::{yaml::Hash, ScanError, Yaml, YamlEmitter, YamlLoader};
 
 pub trait TestDiscovery: Send + Sync {
@@ -20,10 +21,18 @@ struct TestDiscoveryOutput {
 
 impl TestDiscovery for ResmokeProxy {
     fn discover_tests(&self, suite: &str) -> Vec<String> {
+        let start = Instant::now();
         let cmd_output = run_fun!(
             python buildscripts/resmoke.py test-discovery --suite $suite
         )
         .unwrap();
+        event!(
+            Level::INFO,
+            suite,
+            duration_ms = start.elapsed().as_millis() as u64,
+            "Resmoke test discovery finished"
+        );
+
         let output: TestDiscoveryOutput = serde_yaml::from_str(&cmd_output).unwrap();
         output
             .tests

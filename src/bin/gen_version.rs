@@ -511,9 +511,16 @@ impl GenTaskActor {
                     tokio::spawn(async move {
                         let task_name = task_name.as_str();
                         let short_task_name = remove_gen_suffix_ref(task_name);
+                        let start = Instant::now();
                         let task_history = task_history_service
                             .get_task_history(short_task_name, &bv_name, &suite_name)
                             .await;
+                        event!(
+                            Level::INFO,
+                            task_name,
+                            duration_sec = (start.elapsed().as_millis() / 1000) as u64,
+                            "History looked up finished"
+                        );
                         event!(Level::INFO, task_name, "Splitting Task");
                         let start = Instant::now();
                         let gen_suite = ts.split_task(&task_history, &bv_name);

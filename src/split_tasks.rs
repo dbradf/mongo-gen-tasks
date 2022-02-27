@@ -94,6 +94,7 @@ pub struct TaskSplitter {
 impl TaskSplitting for TaskSplitter {
     fn split_task(&self, task_stats: &TaskRuntimeHistory, bv_name: &str) -> GeneratedSuite {
         let suite_name = &task_stats.suite_name;
+
         let test_list: Vec<String> = self
             .test_discovery
             .discover_tests(suite_name)
