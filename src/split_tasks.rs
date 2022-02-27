@@ -1,5 +1,6 @@
 use crate::resmoke::TestDiscovery;
 use crate::task_history::{get_test_name, TaskRuntimeHistory};
+use maplit::hashmap;
 use shrub_rs::models::commands::{fn_call, fn_call_with_params, EvgCommand};
 use shrub_rs::models::params::ParamValue;
 use shrub_rs::models::task::{EvgTask, TaskDependency, TaskRef};
@@ -181,21 +182,12 @@ fn resmoke_commands(
 }
 
 fn run_test_vars(suite_file: &str, params: &ResmokeGenParams) -> HashMap<String, ParamValue> {
-    let mut run_test_vars = HashMap::new();
     let resmoke_args = resmoke_args(suite_file, params);
-
-    run_test_vars.insert(
-        String::from("require_multiversion_setup"),
-        ParamValue::from(params.require_multiversion_setup),
-    );
-    run_test_vars.insert(
-        String::from("resmoke_args"),
-        ParamValue::from(resmoke_args.as_str()),
-    );
-    run_test_vars.insert(
-        String::from("suite"),
-        ParamValue::from(format!("generated_resmoke_config/{}.yml", suite_file).as_str()),
-    );
+    let mut run_test_vars = hashmap! {
+        String::from("require_multiversion_setup") => ParamValue::from(params.require_multiversion_setup),
+        String::from("resmoke_args") => ParamValue::from(resmoke_args.as_str()),
+        String::from("suite") => ParamValue::from(format!("generated_resmoke_config/{}.yml", suite_file).as_str()),
+    };
 
     if let Some(config_location) = &params.config_location {
         run_test_vars.insert(

@@ -1,8 +1,10 @@
+use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use evg_api_rs::models::stats::EvgTestStatsRequest;
-use evg_api_rs::EvgClient;
+use evg_api_rs::EvgApiClient;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct HookRuntimeHistory {
@@ -45,80 +47,94 @@ pub struct TaskRuntimeHistory {
     pub test_map: HashMap<String, TestRuntimeHistory>,
 }
 
-pub async fn get_task_history(
-    evg_client: &EvgClient,
-    task: &str,
-    variant: &str,
-    suite: &str,
-) -> TaskRuntimeHistory {
-    let today = Utc::now();
-    let lookback = Duration::days(14);
-    let start_date = today - lookback;
+#[async_trait]
+pub trait TaskHistoryService: Send + Sync {
+    async fn get_task_history(&self, task: &str, variant: &str, suite: &str) -> TaskRuntimeHistory;
+}
 
-    let request = EvgTestStatsRequest {
-        after_date: start_date.format("%Y-%m-%d").to_string(),
-        before_date: today.format("%Y-%m-%d").to_string(),
-        group_num_days: 14,
-        variants: variant.to_string(),
-        tasks: task.to_string(),
-        tests: None,
-    };
+pub struct TaskHistoryServiceImpl {
+    evg_client: Arc<dyn EvgApiClient>,
+}
 
-    let stats = evg_client
-        .get_test_stats("mongodb-mongo-master", &request)
-        .await
-        .unwrap();
-    let mut hook_map: HashMap<String, Vec<HookRuntimeHistory>> = HashMap::new();
-    for stat in &stats {
-        if is_hook(&stat.test_file) {
-            let test_name = hook_test_name(&stat.test_file);
-            let hook_name = hook_hook_name(&stat.test_file);
-            if let Some(v) = hook_map.get_mut(&test_name.to_string()) {
-                v.push(HookRuntimeHistory {
-                    test_name: test_name.to_string(),
-                    hook_name: hook_name.to_string(),
-                    average_runtime: stat.avg_duration_pass,
-                });
-            } else {
-                hook_map.insert(
-                    test_name.to_string(),
-                    vec![HookRuntimeHistory {
+impl TaskHistoryServiceImpl {
+    pub fn new(evg_client: Arc<dyn EvgApiClient>) -> Self {
+        Self { evg_client }
+    }
+}
+
+#[async_trait]
+impl TaskHistoryService for TaskHistoryServiceImpl {
+    async fn get_task_history(&self, task: &str, variant: &str, suite: &str) -> TaskRuntimeHistory {
+        let today = Utc::now();
+        let lookback = Duration::days(14);
+        let start_date = today - lookback;
+
+        let request = EvgTestStatsRequest {
+            after_date: start_date.format("%Y-%m-%d").to_string(),
+            before_date: today.format("%Y-%m-%d").to_string(),
+            group_num_days: 14,
+            variants: variant.to_string(),
+            tasks: task.to_string(),
+            tests: None,
+        };
+
+        let stats = self
+            .evg_client
+            .get_test_stats("mongodb-mongo-master", &request)
+            .await
+            .unwrap();
+        let mut hook_map: HashMap<String, Vec<HookRuntimeHistory>> = HashMap::new();
+        for stat in &stats {
+            if is_hook(&stat.test_file) {
+                let test_name = hook_test_name(&stat.test_file);
+                let hook_name = hook_hook_name(&stat.test_file);
+                if let Some(v) = hook_map.get_mut(&test_name.to_string()) {
+                    v.push(HookRuntimeHistory {
                         test_name: test_name.to_string(),
                         hook_name: hook_name.to_string(),
                         average_runtime: stat.avg_duration_pass,
-                    }],
-                );
+                    });
+                } else {
+                    hook_map.insert(
+                        test_name.to_string(),
+                        vec![HookRuntimeHistory {
+                            test_name: test_name.to_string(),
+                            hook_name: hook_name.to_string(),
+                            average_runtime: stat.avg_duration_pass,
+                        }],
+                    );
+                }
             }
         }
-    }
 
-    let mut test_map: HashMap<String, TestRuntimeHistory> = HashMap::new();
-    for stat in &stats {
-        if !is_hook(&stat.test_file) {
-            let test_name = get_test_name(&stat.test_file);
-            if let Some(v) = test_map.get_mut(&test_name) {
-                v.test_name = stat.test_file.clone();
-                v.average_runtime += stat.avg_duration_pass;
-            } else {
-                test_map.insert(
-                    test_name.clone(),
-                    TestRuntimeHistory {
-                        test_name: stat.test_file.clone(),
-                        average_runtime: stat.avg_duration_pass,
-                        hooks: hook_map
-                            .get(&test_name.to_string())
-                            .unwrap_or(&vec![])
-                            .clone(),
-                    },
-                );
+        let mut test_map: HashMap<String, TestRuntimeHistory> = HashMap::new();
+        for stat in &stats {
+            if !is_hook(&stat.test_file) {
+                let test_name = get_test_name(&stat.test_file);
+                if let Some(v) = test_map.get_mut(&test_name) {
+                    v.test_name = stat.test_file.clone();
+                    v.average_runtime += stat.avg_duration_pass;
+                } else {
+                    test_map.insert(
+                        test_name.clone(),
+                        TestRuntimeHistory {
+                            test_name: stat.test_file.clone(),
+                            average_runtime: stat.avg_duration_pass,
+                            hooks: hook_map
+                                .get(&test_name.to_string())
+                                .unwrap_or(&vec![])
+                                .clone(),
+                        },
+                    );
+                }
             }
         }
-    }
 
-    TaskRuntimeHistory {
-        suite_name: suite.to_string(),
-        task_name: task.to_string(),
-        test_map,
+        TaskRuntimeHistory {
+            suite_name: suite.to_string(),
+            task_name: task.to_string(),
+            test_map,
+        }
     }
 }
 

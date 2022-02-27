@@ -13,7 +13,7 @@ use mongo_task_gen::{
     find_suite_name, get_gen_task_var, get_project_config, is_fuzzer_task, is_task_generated,
     resmoke::{MultiversionConfig, ResmokeProxy, ResmokeSuiteConfig, TestDiscovery},
     split_tasks::{ResmokeGenParams, SplitConfig, TaskSplitter, TaskSplitting},
-    task_history::{get_task_history, TaskRuntimeHistory},
+    task_history::{TaskHistoryService, TaskHistoryServiceImpl},
     task_types::fuzzer_tasks::{FuzzerGenTaskParams, GenFuzzerService, GenFuzzerServiceImpl},
     taskname::remove_gen_suffix_ref,
     write_config::WriteConfigActorHandle,
@@ -169,16 +169,6 @@ fn task_def_to_fuzzer_params(
     }
 }
 
-async fn task_def_to_split_params(
-    evg_client: &EvgClient,
-    task_name: &str,
-    suite_name: &str,
-    build_variant: &str,
-) -> TaskRuntimeHistory {
-    let task_name = remove_gen_suffix_ref(task_name);
-    get_task_history(evg_client, task_name, build_variant, suite_name).await
-}
-
 async fn task_def_to_gen_params(
     task_def: &EvgTask,
     build_variant: &BuildVariant,
@@ -235,6 +225,7 @@ struct Dependencies {
     pub evg_client: Arc<EvgClient>,
     pub test_discovery: Arc<dyn TestDiscovery>,
     pub task_splitter: Arc<dyn TaskSplitting>,
+    pub task_history_service: Arc<dyn TaskHistoryService>,
     pub gen_fuzzer_service: Arc<dyn GenFuzzerService>,
     pub write_config_actor: Arc<tokio::sync::Mutex<WriteConfigActorHandle>>,
 }
@@ -254,6 +245,7 @@ impl Dependencies {
                 n_suites: evg_expansions.get_max_sub_suites(),
             },
         });
+        let task_history_service = Arc::new(TaskHistoryServiceImpl::new(evg_client.clone()));
         let write_config_actor = Arc::new(tokio::sync::Mutex::new(WriteConfigActorHandle::new(
             CONFIG_DIR,
         )));
@@ -263,6 +255,7 @@ impl Dependencies {
             gen_fuzzer_service,
             test_discovery,
             task_splitter,
+            task_history_service,
             write_config_actor,
         }
     }
@@ -293,7 +286,7 @@ async fn main() {
     let deps = Arc::new(Dependencies::new(
         &evg_expansions,
         &opt.evg_auth_file,
-        &multiversion_config.multiversion_config.last_versions,
+        &multiversion_config.last_versions,
     ));
 
     let mut handles = vec![];
@@ -312,7 +305,7 @@ async fn main() {
                         task_def_to_fuzzer_params(task_def, build_variant, config_location);
 
                     handles.push(tokio::spawn(async move {
-                        let generated_task = gen_fuzzer.generate_fuzzer_task(&params);
+                        let generated_task = gen_fuzzer.generate_fuzzer_task(&params).unwrap();
                         let mut gen_config = gc.lock().unwrap();
                         gen_config
                             .gen_task_specs
@@ -327,7 +320,6 @@ async fn main() {
                     let bv = *build_variant;
                     let config_loc = config_location.clone();
                     let write_actor = deps.write_config_actor.clone();
-                    let evg_api = deps.evg_client.clone();
                     let task_name = task_def.name.to_string();
                     let suite_name = find_suite_name(task_def).to_string();
                     let bv_name = bv.name.to_string();
@@ -335,9 +327,11 @@ async fn main() {
 
                     handles.push(tokio::spawn(async move {
                         let task_name = task_name.as_str();
-                        let task_history =
-                            task_def_to_split_params(&evg_api, task_name, &suite_name, &bv_name)
-                                .await;
+                        let task_history_service = deps.task_history_service.clone();
+                        let short_task_name = remove_gen_suffix_ref(task_name);
+                        let task_history = task_history_service
+                            .get_task_history(short_task_name, &bv_name, &suite_name)
+                            .await;
                         event!(Level::INFO, task_name, "Splitting Task");
                         let start = Instant::now();
                         let ts = deps.task_splitter.clone();

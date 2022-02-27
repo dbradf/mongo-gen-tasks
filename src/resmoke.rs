@@ -12,28 +12,30 @@ pub trait TestDiscovery: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct ResmokeProxy {}
 
+#[derive(Debug, Deserialize)]
+struct TestDiscoveryOutput {
+    pub suite_name: String,
+    pub tests: Vec<String>,
+}
+
 impl TestDiscovery for ResmokeProxy {
     fn discover_tests(&self, suite: &str) -> Vec<String> {
         let cmd_output = run_fun!(
-            python buildscripts/resmoke.py discover --suite $suite
+            python buildscripts/resmoke.py test-discovery --suite $suite
         )
         .unwrap();
-        cmd_output
-            .split('\n')
-            .map(|s| s.to_string())
+        let output: TestDiscoveryOutput = serde_yaml::from_str(&cmd_output).unwrap();
+        output
+            .tests
+            .into_iter()
             .filter(|f| Path::new(f).exists())
             .collect()
     }
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct MultiversionConfigContents {
-    pub last_versions: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 pub struct MultiversionConfig {
-    pub multiversion_config: MultiversionConfigContents,
+    pub last_versions: Vec<String>,
 }
 
 impl MultiversionConfig {

@@ -1,5 +1,7 @@
+use anyhow::Result;
 use std::collections::HashMap;
 
+use maplit::hashmap;
 use shrub_rs::models::{
     commands::{fn_call, fn_call_with_params},
     params::ParamValue,
@@ -71,20 +73,10 @@ pub struct FuzzerGenTaskParams {
 
 impl FuzzerGenTaskParams {
     fn build_jstestfuzz_vars(&self) -> HashMap<String, ParamValue> {
-        let mut vars = HashMap::new();
-        vars.insert(
-            "npm_command".to_string(),
-            ParamValue::from(self.npm_command.as_str()),
-        );
-        vars.insert(
-            "jstestfuzz_vars".to_string(),
-            ParamValue::String(format!(
-                "--numGeneratedFiles {} {}",
-                self.num_files,
-                self.jstestfuzz_vars.clone().unwrap_or_default()
-            )),
-        );
-        vars
+        hashmap! {
+            "npm_command".to_string() => ParamValue::from(self.npm_command.as_str()),
+            "jstestfuzz_vars".to_string() => ParamValue::String(format!("--numGeneratedFiles {} {}", self.num_files, self.jstestfuzz_vars.clone().unwrap_or_default())),
+        }
     }
 
     fn build_run_tests_vars(
@@ -92,39 +84,18 @@ impl FuzzerGenTaskParams {
         suite_name: Option<&str>,
         bin_version: Option<&str>,
     ) -> HashMap<String, ParamValue> {
-        let mut vars = HashMap::new();
-        vars.insert(
-            "continue_on_failure".to_string(),
-            ParamValue::from(self.continue_on_failure),
-        );
-        vars.insert(
-            "resmoke_args".to_string(),
-            ParamValue::from(self.resmoke_args.as_str()),
-        );
-        vars.insert(
-            "resmoke_jobs_max".to_string(),
-            ParamValue::from(self.resmoke_jobs_max),
-        );
-        vars.insert(
-            "should_shuffle".to_string(),
-            ParamValue::from(self.should_shuffle),
-        );
-        vars.insert(
-            "require_multiversion_setup".to_string(),
-            ParamValue::from(self.require_multiversion_setup.unwrap_or(false)),
-        );
-        vars.insert(
-            "timeout_secs".to_string(),
-            ParamValue::from(self.timeout_secs),
-        );
-        vars.insert(
-            "task".to_string(),
-            ParamValue::from(self.task_name.as_str()),
-        );
-        vars.insert(
-            "gen_task_config_location".to_string(),
-            ParamValue::from(self.config_location.as_str()),
-        );
+        let mut vars = hashmap! {
+            "continue_on_failure".to_string() => ParamValue::from(self.continue_on_failure),
+            "resmoke_args".to_string() => ParamValue::from(self.resmoke_args.as_str()),
+            "resmoke_jobs_max".to_string() => ParamValue::from(self.resmoke_jobs_max),
+            "should_shuffle".to_string() => ParamValue::from(self.should_shuffle),
+            "require_multiversion_setup".to_string() => ParamValue::from(self.require_multiversion_setup.unwrap_or(false)),
+            "timeout_secs".to_string() => ParamValue::from(self.timeout_secs),
+            "task".to_string() => ParamValue::from(self.task_name.as_str()),
+            "gen_task_config_location".to_string() => ParamValue::from(self.config_location.as_str()),
+
+        };
+
         if let Some(suite) = suite_name {
             vars.insert("suite".to_string(), ParamValue::from(suite));
         } else {
@@ -141,16 +112,16 @@ impl FuzzerGenTaskParams {
         vars
     }
 
-    pub fn get_version_combination(&self) -> Vec<String> {
-        self.suite_config
-            .get_fixture_type()
-            .unwrap()
-            .get_version_combinations()
+    pub fn get_version_combination(&self) -> Result<Vec<String>> {
+        Ok(self
+            .suite_config
+            .get_fixture_type()?
+            .get_version_combinations())
     }
 }
 
 pub trait GenFuzzerService: Sync + Send {
-    fn generate_fuzzer_task(&self, params: &FuzzerGenTaskParams) -> FuzzerTask;
+    fn generate_fuzzer_task(&self, params: &FuzzerGenTaskParams) -> Result<FuzzerTask>;
 }
 
 #[derive(Debug, Clone)]
@@ -181,11 +152,11 @@ impl GenFuzzerServiceImpl {
 }
 
 impl GenFuzzerService for GenFuzzerServiceImpl {
-    fn generate_fuzzer_task(&self, params: &FuzzerGenTaskParams) -> FuzzerTask {
+    fn generate_fuzzer_task(&self, params: &FuzzerGenTaskParams) -> Result<FuzzerTask> {
         let task_name = &params.task_name;
         let mut sub_tasks: Vec<EvgTask> = vec![];
         if params.require_multiversion_setup.unwrap_or(false) {
-            let version_combinations = &params.get_version_combination();
+            let version_combinations = &params.get_version_combination()?;
             event!(
                 Level::INFO,
                 task_name = task_name.as_str(),
@@ -219,10 +190,10 @@ impl GenFuzzerService for GenFuzzerServiceImpl {
                 .collect();
         }
 
-        FuzzerTask {
+        Ok(FuzzerTask {
             task_name: params.task_name.to_string(),
             sub_tasks,
-        }
+        })
     }
 }
 
