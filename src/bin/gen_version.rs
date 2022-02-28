@@ -313,19 +313,71 @@ async fn main() {
 
     let task_definitions = Arc::new(Mutex::new(vec![]));
     let generated_build_variants = Arc::new(Mutex::new(vec![]));
-    let seen_tasks = Arc::new(Mutex::new(HashSet::new()));
     let mut bv_handles = vec![];
 
-    for (_bv_name, build_variant) in evg_project.get_build_variant_map() {
-        let build_variant = build_variant.clone();
+    let build_variant_map = evg_project.get_build_variant_map();
+    let mut build_variants: Vec<String> = build_variant_map.keys().into_iter().filter_map(|bv| {
+        if bv.ends_with("-required") {
+            Some(bv.to_string())
+        } else {
+            None
+        }
+    }).collect();
+    build_variants.extend::<Vec<String>>(build_variant_map.keys().into_iter().filter_map(|bv| {
+        if !bv.ends_with("-required") {
+            Some(bv.to_string())
+        } else {
+            None
+        }
+    }).collect());
+
+    let generated_tasks = Arc::new(Mutex::new(HashMap::new()));
+    let task_map = evg_project.get_task_def_map();
+    let mut handles = vec![];
+    let mut seen_tasks = HashSet::new();
+    for bv_name in &build_variants {
+        let bv_name = bv_name.to_string();
+        let build_variant = &build_variant_map.get(&bv_name).unwrap().clone().clone();
+        for task in &build_variant.tasks {
+            if seen_tasks.contains(&task.name) {
+                continue;
+            }
+            seen_tasks.insert(task.name.to_string());
+            if let Some(task_def) = task_map.get(&task.name) {
+                let task_def = *task_def;
+                if is_task_generated(task_def)  && !is_fuzzer_task(task_def) {
+                    let task_name = task_def.name.to_string();
+                    let suite_name = find_suite_name(task_def).to_string();
+                    let deps = deps.clone();
+                    let bv_name = bv_name.clone();
+                    let generated_tasks = generated_tasks.clone();
+                    handles.push(tokio::spawn(async move {
+                        let gen_task_actor = deps.gen_task_actor.clone();
+                        let gen_suite = gen_task_actor
+                            .get_task(&task_name, &suite_name, &bv_name)
+                            .await;
+
+                        let mut generated_tasks = generated_tasks.lock().unwrap();
+                        generated_tasks.insert(task_name.to_string(), gen_suite);
+                    }));
+                }
+            }
+        }
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    for bv_name in build_variants {
+        let build_variant = build_variant_map.get(&bv_name).unwrap().clone().clone();
         let evg_project = evg_project.clone();
         let gen_fuzzer_service = deps.gen_fuzzer_service.clone();
         let config_location = config_location.to_string();
 
         let generated_build_variants = generated_build_variants.clone();
         let task_definitions = task_definitions.clone();
-        let seen_tasks = seen_tasks.clone();
-        let deps = deps.clone();
+        let generated_tasks = generated_tasks.clone();
 
         bv_handles.push(tokio::spawn(async move {
             let task_map = evg_project.get_task_def_map();
@@ -369,31 +421,16 @@ async fn main() {
                                 }
                             }));
                         } else {
-                            let bv = build_variant.clone();
                             let task_name = task_def.name.to_string();
-                            let suite_name = find_suite_name(task_def).to_string();
-                            let bv_name = bv.name.to_string();
-                            let config_loc = config_location.clone();
-                            let gen_params = task_def_to_gen_params(task_def, &bv, &config_loc);
-                            let seen_tasks = seen_tasks.clone();
-                            let deps = deps.clone();
-
-                            handles.push(tokio::spawn(async move {
-                                let gen_task_actor = deps.gen_task_actor.clone();
-                                let gen_suite = gen_task_actor
-                                    .get_task(&task_name, &suite_name, &bv_name)
-                                    .await;
-                                let mut gen_config = gc.lock().unwrap();
-                                let mut seen_tasks = seen_tasks.lock().unwrap();
-                                if !seen_tasks.contains(&task_name) {
-                                    seen_tasks.insert(task_name);
-                                    gen_config
-                                        .gen_task_def
-                                        .extend(gen_suite.execution_tasks(&gen_params));
-                                }
-                                gen_config.gen_task_specs.extend(gen_suite.task_refs());
-                                gen_config.display_tasks.push(gen_suite.display_task());
-                            }));
+                            let gen_params = task_def_to_gen_params(task_def, &build_variant, &config_location);
+                            let mut gen_config = gc.lock().unwrap();
+                            let generated_tasks = generated_tasks.lock().unwrap();
+                            let gen_suite = generated_tasks.get(&task_name).unwrap();
+                            gen_config
+                                .gen_task_def
+                                .extend(gen_suite.execution_tasks(&gen_params));
+                            gen_config.gen_task_specs.extend(gen_suite.task_refs());
+                            gen_config.display_tasks.push(gen_suite.display_task());
                         }
                     }
                 }

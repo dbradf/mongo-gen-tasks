@@ -5,6 +5,7 @@ use shrub_rs::models::commands::{fn_call, fn_call_with_params, EvgCommand};
 use shrub_rs::models::params::ParamValue;
 use shrub_rs::models::task::{EvgTask, TaskDependency, TaskRef};
 use shrub_rs::models::variant::DisplayTask;
+use tracing::{event, Level};
 use std::cmp::min;
 use std::collections::HashMap;
 use std::path::Path;
@@ -108,8 +109,12 @@ impl TaskSplitting for TaskSplitter {
             .fold(0.0, |init, (_, item)| init + item.average_runtime);
 
         let max_tasks = min(self.split_config.n_suites, test_list.len());
-
         let runtime_per_subtask = total_runtime / max_tasks as f64;
+        event!(
+            Level::INFO,
+            "Splitting task: {}, runtime: {}, tests: {}",
+            &suite_name, runtime_per_subtask, test_list.len()
+        );
         let mut sub_suites = vec![];
         let mut running_tests = vec![];
         let mut running_runtime = 0.0;
